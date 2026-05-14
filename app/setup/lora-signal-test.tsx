@@ -1,7 +1,8 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
-import { Card, Snackbar } from 'react-native-paper';
+import { Card } from 'react-native-paper';
+import { NotificationSnackbar } from '../../components/NotificationSnackbar';
 import { mockSignalHistory } from '../../constants/mockData';
 import { colors, radius, shadows, spacing } from '../../constants/theme';
 import { loraQualityFromMetrics } from '../../utils/statusUtils';
@@ -76,9 +77,7 @@ export default function LoraSignalTestScreen() {
       />
       <SecondaryButton label="Save position" style={{ marginTop: spacing.sm }} onPress={() => setSnack(true)} />
 
-      <Snackbar visible={snack} onDismiss={() => setSnack(false)} duration={2000}>
-        Saved install position (mock)
-      </Snackbar>
+      <NotificationSnackbar visible={snack} onDismiss={() => setSnack(false)} duration={2000} message="Saved install position (mock)" />
     </AppScreen>
   );
 }

@@ -29,7 +29,8 @@ function RoleIcon({ role }: { role: AquaDevice['role'] }) {
 }
 
 export function NodeCard({ device, depth, isLast, onPress }: Props) {
-  const online = device.online === 'online';
+  const dotColor =
+    device.online === 'online' ? colors.success : device.online === 'warning' ? colors.warning : colors.danger;
   const accent = roleAccent[device.role];
   const signal =
     usesWifiUi(device) ? wifiQualityFromRssi(device.wifiRssi) : usesLoraUi(device)
@@ -56,7 +57,7 @@ export function NodeCard({ device, depth, isLast, onPress }: Props) {
             width: 12,
             height: 12,
             borderRadius: 6,
-            backgroundColor: online ? colors.success : colors.danger,
+            backgroundColor: dotColor,
             borderWidth: 2,
             borderColor: '#fff',
           }}

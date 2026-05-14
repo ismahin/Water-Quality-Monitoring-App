@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Text, View } from 'react-native';
-import { Card, RadioButton, Snackbar, TextInput } from 'react-native-paper';
+import { Card, RadioButton, TextInput } from 'react-native-paper';
+import { NotificationSnackbar } from '../../components/NotificationSnackbar';
 import { colors, radius, shadows, spacing } from '../../constants/theme';
 import { useMockApp } from '../../context/MockAppContext';
 import { AppScreen } from '../../components/AppScreen';
@@ -88,9 +89,7 @@ export default function ThresholdsScreen() {
       </Card>
 
       <PrimaryButton label="Save thresholds" onPress={save} style={{ marginTop: spacing.lg }} />
-      <Snackbar visible={snack} onDismiss={() => setSnack(false)} duration={2000}>
-        Thresholds saved (mock)
-      </Snackbar>
+      <NotificationSnackbar visible={snack} onDismiss={() => setSnack(false)} duration={2000} message="Thresholds saved (mock)" />
     </AppScreen>
   );
 }

@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Card, Snackbar, TextInput } from 'react-native-paper';
+import { Card, TextInput } from 'react-native-paper';
+import { NotificationSnackbar } from '../../components/NotificationSnackbar';
 import { colors, radius, shadows, spacing } from '../../constants/theme';
 import { useMockApp } from '../../context/MockAppContext';
 import { AppScreen } from '../../components/AppScreen';
@@ -48,9 +49,7 @@ export default function AddPondScreen() {
           setTimeout(() => router.back(), 600);
         }}
       />
-      <Snackbar visible={snack} onDismiss={() => setSnack(false)}>
-        Pond saved (mock)
-      </Snackbar>
+      <NotificationSnackbar visible={snack} onDismiss={() => setSnack(false)} message="Pond saved (mock)" />
     </AppScreen>
   );
 }

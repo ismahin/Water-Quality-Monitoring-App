@@ -14,20 +14,57 @@
       "backgroundColor": "#0EA5E9"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "AquaNode uses Bluetooth to discover and provision ESP32 water quality devices.",
+        "NSLocationWhenInUseUsageDescription": "Location is required on some Android/iOS versions for Bluetooth scanning during device setup."
+      }
     },
     "android": {
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0EA5E9"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.AquaNode"
     },
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
     },
-    "plugins": ["expo-router"]
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to use location for Bluetooth scanning during AquaNode device setup.",
+          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use location for Bluetooth scanning during AquaNode device setup."
+        }
+      ],
+      [
+        "@orbital-systems/react-native-esp-idf-provisioning",
+        {
+          "transport": "ble",
+          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to discover and provision nearby AquaNode ESP32 devices over Bluetooth.",
+          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use location for Bluetooth scanning and Wi-Fi provisioning where required by the OS."
+        }
+      ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "796802f6-1bc5-403c-83df-cf704df49d50"
+      }
+    },
+    "owner": "ismahin"
   }
 }

@@ -26,7 +26,7 @@ export default function DiagnosticsScreen() {
       { key: 'fw', label: 'Firmware up to date', ok: !device.availableFirmwareVersion },
     ];
     if (usesWifiUi(device)) {
-      rows.push({ key: 'wifi', label: 'Wi‑Fi connected', ok: device.online === 'online' });
+      rows.push({ key: 'wifi', label: 'Wi‑Fi connected', ok: device.online === 'online' || device.online === 'warning' });
       rows.push({ key: 'cloud', label: 'Cloud reachable', ok: device.cloudOnline });
     }
     if (usesLoraUi(device)) {

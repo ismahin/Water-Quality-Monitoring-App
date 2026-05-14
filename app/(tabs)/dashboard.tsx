@@ -4,7 +4,9 @@ import { Pressable, Text, View } from 'react-native';
 import { Card, Chip, FAB } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronDown } from 'lucide-react-native';
+import { Battery, Wifi } from 'lucide-react-native';
 import { mockPhTrend } from '../../constants/mockData';
+import { isFirebaseConfigured } from '../../constants/env';
 import { colors, radius, shadows, spacing } from '../../constants/theme';
 import { useMockApp } from '../../context/MockAppContext';
 import { formatRelativeTime } from '../../utils/formatTime';
@@ -14,8 +16,10 @@ import {
   tdsStatusLabel,
   turbidityStatusLabel,
 } from '../../utils/sensorUtils';
+import { usesWifiUi, type GatewayDevice, type SingleDevice } from '../../types/device';
 import { AppScreen } from '../../components/AppScreen';
 import { DeviceStatusCard } from '../../components/DeviceStatusCard';
+import { LoRaStatusCard } from '../../components/LoRaStatusCard';
 import { MetricCard } from '../../components/MetricCard';
 import { SectionTitle } from '../../components/SectionTitle';
 import { SensorChart } from '../../components/SensorChart';
@@ -76,7 +80,7 @@ function pondScoreUi(health: 'good' | 'warning' | 'critical'): {
 export default function DashboardScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user, ponds, devices, alerts } = useMockApp();
+  const { user, ponds, devices, alerts, registeredDevices, getLiveSnapshot, firebaseRtdbConnected } = useMockApp();
   const [pondId, setPondId] = useState('pond-a');
   const pond = useMemo(() => ponds.find((p) => p.id === pondId) ?? ponds[0], [pondId, ponds]);
   const pondDevices = useMemo(() => devices.filter((d) => pond.deviceIds.includes(d.id)), [devices, pond.deviceIds]);
@@ -89,13 +93,37 @@ export default function DashboardScreen() {
     );
   }, [devices, pond.deviceIds]);
 
+  const liveReg = registeredDevices[0];
+  const liveSnap = liveReg ? getLiveSnapshot(liveReg.deviceId) : undefined;
+  const liveHasLatest = !!liveSnap?.latest;
+  const liveHasAnyFirebase = !!(liveSnap?.latest || liveSnap?.status);
+  const showLiveFirebaseUi = !!liveReg && isFirebaseConfigured();
+  const dataSourceIsLive = showLiveFirebaseUi && liveHasAnyFirebase;
+  const waitingForTelemetry = showLiveFirebaseUi && !liveHasAnyFirebase;
+
+  const telemetryDevice = useMemo(() => {
+    if (showLiveFirebaseUi && liveReg) {
+      return devices.find((d) => d.id === liveReg.deviceId) ?? null;
+    }
+    return gateway ?? null;
+  }, [showLiveFirebaseUi, liveReg, devices, gateway]);
+
+  const statusDevice = useMemo(() => {
+    if (showLiveFirebaseUi && liveReg) {
+      return devices.find((d) => d.id === liveReg.deviceId) ?? null;
+    }
+    return gateway ?? null;
+  }, [showLiveFirebaseUi, liveReg, devices, gateway]);
+
+  const liveWifi = telemetryDevice && usesWifiUi(telemetryDevice) ? (telemetryDevice as SingleDevice | GatewayDevice) : null;
+
   const net = useMemo(
     () => ({
       gateways: pondDevices.filter((d) => d.role === 'gateway').length,
       relays: pondDevices.filter((d) => d.role === 'relay').length,
       children: pondDevices.filter((d) => d.role === 'child').length,
       singles: pondDevices.filter((d) => d.role === 'single').length,
-      active: pondDevices.filter((d) => d.online === 'online').length,
+      active: pondDevices.filter((d) => d.online === 'online' || d.online === 'warning').length,
     }),
     [pondDevices],
   );
@@ -103,7 +131,7 @@ export default function DashboardScreen() {
   const pondAlerts = useMemo(() => alerts.filter((a) => a.pondId === pond.id && !a.resolved).slice(0, 3), [alerts, pond.id]);
   const scoreUi = useMemo(() => pondScoreUi(pond.healthStatus), [pond.healthStatus]);
 
-  const s = gateway?.sensors;
+  const s = telemetryDevice?.sensors;
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
@@ -116,6 +144,31 @@ export default function DashboardScreen() {
         {greeting}, {user.firstName}
       </Text>
       <Text style={{ marginTop: 6, color: colors.mutedStrong, fontWeight: '700', fontSize: 15 }}>Welcome back</Text>
+
+      <View style={{ marginTop: spacing.sm, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        <Chip compact style={{ backgroundColor: colors.surfaceMuted }} textStyle={{ fontWeight: '800', fontSize: 12 }}>
+          {!showLiveFirebaseUi || !isFirebaseConfigured()
+            ? 'Mock data'
+            : dataSourceIsLive
+              ? 'Live Firebase'
+              : 'Live device'}
+        </Chip>
+        {isFirebaseConfigured() ? (
+          <Chip compact style={{ backgroundColor: colors.surfaceMuted }} textStyle={{ fontWeight: '800', fontSize: 12 }}>
+            Firebase: {firebaseRtdbConnected ? 'connected' : 'disconnected'}
+          </Chip>
+        ) : null}
+        {dataSourceIsLive && liveWifi ? (
+          <>
+            <Chip compact style={{ backgroundColor: '#E0F2FE' }} textStyle={{ fontWeight: '800', fontSize: 12, color: colors.navy }}>
+              {liveWifi.firebaseRole ?? liveWifi.role.toUpperCase()}
+            </Chip>
+            <Chip compact style={{ backgroundColor: '#CFFAFE' }} textStyle={{ fontWeight: '800', fontSize: 12, color: colors.navy }}>
+              {liveWifi.role === 'gateway' ? 'Gateway Mode Active' : 'Single Device Mode'}
+            </Chip>
+          </>
+        ) : null}
+      </View>
 
       <View style={{ marginTop: spacing.md, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <Text style={{ color: colors.mutedStrong, fontWeight: '800', fontSize: 13 }}>Pond</Text>
@@ -150,6 +203,25 @@ export default function DashboardScreen() {
       </View>
 
       <SectionTitle title="Live metrics" />
+      {waitingForTelemetry ? (
+        <Card
+          style={{
+            marginBottom: spacing.md,
+            borderRadius: radius.xl,
+            ...shadows.soft,
+            backgroundColor: '#FFFBEB',
+            borderWidth: 1,
+            borderColor: 'rgba(245, 158, 11, 0.45)',
+          }}
+        >
+          <Card.Content>
+            <Text style={{ fontWeight: '900', color: colors.navy }}>Waiting for telemetry</Text>
+            <Text style={{ marginTop: 6, color: colors.mutedStrong, lineHeight: 20 }}>
+              Device is registered. Waiting for the first Firebase snapshot at devices/{liveReg?.deviceId}/latest or …/status…
+            </Text>
+          </Card.Content>
+        </Card>
+      ) : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md }}>
         {s ? (
           <>
@@ -158,9 +230,9 @@ export default function DashboardScreen() {
                 icon={<Gauge size={20} color={colors.primary} />}
                 title="pH"
                 value={s.ph.toFixed(2)}
-                statusLabel="Normal"
+                statusLabel={phStatusLabel(s.ph)}
                 statusTone={toneForPh(s.ph)}
-                trendDelta={0.04}
+                trendDelta={dataSourceIsLive ? undefined : 0.04}
               />
             </View>
             <View style={{ width: '47%' }}>
@@ -169,9 +241,9 @@ export default function DashboardScreen() {
                 title="TDS"
                 value={`${Math.round(s.tdsPpm)}`}
                 unit="ppm"
-                statusLabel="Normal"
+                statusLabel={tdsStatusLabel(s.tdsPpm)}
                 statusTone={toneForTds(s.tdsPpm)}
-                trendDelta={-6}
+                trendDelta={dataSourceIsLive ? undefined : -6}
               />
             </View>
             <View style={{ width: '47%' }}>
@@ -180,9 +252,9 @@ export default function DashboardScreen() {
                 title="Temperature"
                 value={s.temperatureC.toFixed(1)}
                 unit="°C"
-                statusLabel="Warm"
+                statusLabel={tempStatusLabel(s.temperatureC)}
                 statusTone={toneForTemp(s.temperatureC)}
-                trendDelta={0.2}
+                trendDelta={dataSourceIsLive ? undefined : 0.2}
               />
             </View>
             <View style={{ width: '47%' }}>
@@ -191,18 +263,58 @@ export default function DashboardScreen() {
                 title="Turbidity"
                 value={`${Math.round(s.turbidityNtu)}`}
                 unit="NTU"
-                statusLabel="Slightly Cloudy"
+                statusLabel={turbidityStatusLabel(s.turbidityNtu)}
                 statusTone={toneForTurb(s.turbidityNtu)}
-                trendDelta={1.2}
+                trendDelta={dataSourceIsLive ? undefined : 1.2}
               />
             </View>
+            {dataSourceIsLive ? (
+              <>
+                <View style={{ width: '47%' }}>
+                  <MetricCard
+                    icon={<Battery size={20} color={colors.primary} />}
+                    title="Battery"
+                    value={`${Math.round(liveWifi?.batteryPercent ?? 0)}`}
+                    unit="%"
+                    statusLabel={liveWifi && liveWifi.batteryPercent > 20 ? 'OK' : 'Low'}
+                    statusTone={liveWifi && liveWifi.batteryPercent > 20 ? 'success' : 'warning'}
+                  />
+                </View>
+                <View style={{ width: '47%' }}>
+                  <MetricCard
+                    icon={<Wifi size={20} color={colors.primary} />}
+                    title="Wi‑Fi RSSI"
+                    value={`${Math.round(liveWifi?.wifiRssi ?? -100)}`}
+                    unit="dBm"
+                    statusLabel="Signal"
+                    statusTone="info"
+                  />
+                </View>
+              </>
+            ) : null}
           </>
         ) : null}
       </View>
 
-      <SectionTitle title="Gateway status" />
-      {gateway ? (
-        <DeviceStatusCard device={gateway} onPress={() => router.push(`/device/${gateway.id}`)} />
+      {dataSourceIsLive && liveWifi ? (
+        <View style={{ marginTop: spacing.md }}>
+          <LoRaStatusCard
+            enabled={liveWifi.loraEnabled === true}
+            initialized={liveWifi.loraInitialized === true}
+            gatewayReady={liveWifi.loraGatewayReady === true}
+            frequencyMhz={liveWifi.loraFrequencyMhz}
+            packetCount={liveWifi.loraPacketCount}
+            lastRssi={liveWifi.lastLoraRssi}
+            lastSnr={liveWifi.lastLoraSnr}
+            lastError={liveWifi.loraLastError}
+            lastPayload={liveWifi.lastLoraPayload}
+          />
+        </View>
+      ) : null}
+
+      <SectionTitle title={dataSourceIsLive ? 'Device status' : 'Gateway status'} />
+      {statusDevice ? (
+        <DeviceStatusCard device={statusDevice} onPress={() => router.push(`/device/${statusDevice.id}`)} />
       ) : null}
 
       <SectionTitle title="Network summary" />
@@ -289,6 +401,9 @@ export default function DashboardScreen() {
       </Card>
 
       <SectionTitle title="pH trend" />
+      <Text style={{ marginBottom: spacing.sm, color: colors.mutedStrong, fontSize: 13, fontWeight: '600' }}>
+        {dataSourceIsLive ? 'Sample intraday curve (live history from firmware TODO).' : 'Demo trend data'}
+      </Text>
       <Card
         style={{
           borderRadius: radius.xl,

@@ -1,3 +1,4 @@
+import type { ViewStyle } from 'react-native';
 import { MD3LightTheme, configureFonts } from 'react-native-paper';
 import type { MD3Theme } from 'react-native-paper';
 
@@ -73,6 +74,18 @@ export const layout = {
   buttonMinHeight: 52,
   hitSlop: 12,
 } as const;
+
+/**
+ * Paper `Dialog` `style`. Also set a moderate `borderRadius`: MD3 Dialog defaults to
+ * `7 * theme.roundness`, which with our card roundness becomes huge and turns the dialog
+ * into a capsule so title/actions look outside the white surface.
+ */
+export const modalSurfaceFit: ViewStyle = {
+  alignSelf: 'center',
+  width: '92%',
+  maxWidth: 560,
+  borderRadius: radius.lg,
+};
 
 const fontConfig = {
   bodyLarge: { fontFamily: 'System' },

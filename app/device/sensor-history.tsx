@@ -1,7 +1,8 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
-import { Card, Chip, Snackbar } from 'react-native-paper';
+import { Card, Chip } from 'react-native-paper';
+import { NotificationSnackbar } from '../../components/NotificationSnackbar';
 import { getDeviceById, mockPhTrend } from '../../constants/mockData';
 import type { SensorKind } from '../../types/sensor';
 import { colors, radius, shadows, spacing } from '../../constants/theme';
@@ -10,6 +11,9 @@ import { AppScreen } from '../../components/AppScreen';
 import { AppHeader } from '../../components/AppHeader';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { SensorChart } from '../../components/SensorChart';
+
+// TODO: When firmware writes timestamped readings under devices/{deviceId}/readings (or similar),
+// replace mock series with Firebase queries and bind range/sensor controls to real history.
 
 const ranges = ['1H', '24H', '7D', '30D'] as const;
 
@@ -94,9 +98,7 @@ export default function SensorHistoryScreen() {
       </View>
 
       <PrimaryButton label="Export CSV (mock)" style={{ marginTop: spacing.lg }} onPress={() => setSnack(true)} />
-      <Snackbar visible={snack} onDismiss={() => setSnack(false)} duration={2000}>
-        Export queued (mock)
-      </Snackbar>
+      <NotificationSnackbar visible={snack} onDismiss={() => setSnack(false)} duration={2000} message="Export queued (mock)" />
     </AppScreen>
   );
 }

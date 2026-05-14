@@ -3,7 +3,8 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
-import { Card, ProgressBar, Snackbar } from 'react-native-paper';
+import { Card, ProgressBar } from 'react-native-paper';
+import { NotificationSnackbar } from '../../components/NotificationSnackbar';
 import { colors, radius, shadows, spacing } from '../../constants/theme';
 import { getDeviceById } from '../../constants/mockData';
 import { AppScreen } from '../../components/AppScreen';
@@ -80,9 +81,7 @@ export default function FirmwareUpdateScreen() {
         style={{ marginTop: spacing.sm }}
       />
 
-      <Snackbar visible={!!snack} onDismiss={() => setSnack(null)} duration={2500}>
-        {snack}
-      </Snackbar>
+      <NotificationSnackbar visible={!!snack} onDismiss={() => setSnack(null)} duration={2500} message={snack ?? ''} />
     </AppScreen>
   );
 }

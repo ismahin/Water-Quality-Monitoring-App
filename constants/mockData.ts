@@ -1,5 +1,5 @@
-// TODO: MQTT/Firebase integration — live telemetry, remote config, and OTA status feeds.
-// TODO: Backend API integration — replace this module with API clients + normalized caching.
+// TODO: MQTT / additional cloud paths — OTA status, remote config.
+// TODO: Backend API integration — replace mock alerts/thresholds with API + caching.
 
 import type { AquaAlert } from '../types/alert';
 import type { AquaDevice } from '../types/device';

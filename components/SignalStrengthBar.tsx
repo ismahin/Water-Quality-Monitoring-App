@@ -13,6 +13,8 @@ type Props = {
   snr?: number;
   packetSuccess?: number;
   showLabels?: boolean;
+  /** When true, LoRa link quality bars are hidden; show copy instead (no child packets yet). */
+  loraAwaitingChildPackets?: boolean;
 };
 
 const order: SignalQuality[] = ['Weak', 'Fair', 'Good', 'Excellent'];
@@ -27,7 +29,22 @@ export function SignalStrengthBar({
   snr = 0,
   packetSuccess = 100,
   showLabels = true,
+  loraAwaitingChildPackets = false,
 }: Props) {
+  if (type === 'lora' && loraAwaitingChildPackets) {
+    return (
+      <View>
+        {showLabels ? (
+          <Text style={{ color: colors.mutedStrong, fontWeight: '700', marginBottom: spacing.sm }}>LoRa link</Text>
+        ) : null}
+        <Text style={{ color: colors.mutedStrong, fontSize: 12, fontWeight: '600', lineHeight: 18 }}>
+          No child packets received yet. LoRa initialized only confirms the module — link activity starts after the first
+          child uplink.
+        </Text>
+      </View>
+    );
+  }
+
   const quality =
     type === 'wifi'
       ? wifiQualityFromRssi(rssi)

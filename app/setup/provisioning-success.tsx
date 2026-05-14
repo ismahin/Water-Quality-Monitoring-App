@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text, View } from 'react-native';
 import { Card } from 'react-native-paper';
 import { CheckCircle2 } from 'lucide-react-native';
@@ -10,6 +10,9 @@ import { SecondaryButton } from '../../components/SecondaryButton';
 
 export default function ProvisioningSuccessScreen() {
   const router = useRouter();
+  const { deviceId, ssid } = useLocalSearchParams<{ deviceId?: string; ssid?: string }>();
+  const id = String(deviceId ?? '');
+  const net = String(ssid ?? '');
 
   return (
     <AppScreen>
@@ -29,17 +32,35 @@ export default function ProvisioningSuccessScreen() {
           >
             <CheckCircle2 color={colors.success} size={38} />
           </View>
-          <Text style={{ fontSize: 20, fontWeight: '900', color: colors.navy, textAlign: 'center' }}>
-            Device connected
-          </Text>
+          <Text style={{ fontSize: 20, fontWeight: '900', color: colors.navy, textAlign: 'center' }}>Device connected</Text>
           <Text style={{ color: colors.muted, textAlign: 'center', lineHeight: 20 }}>
-            Next, choose how this hardware will operate on your network.
+            The device joined your Wi‑Fi network. Telemetry should appear under Firebase Realtime Database.
           </Text>
+          <View style={{ alignSelf: 'stretch', gap: 6, marginTop: spacing.sm }}>
+            <Text style={{ color: colors.navy, fontWeight: '800' }}>Device ID</Text>
+            <Text style={{ color: colors.mutedStrong }}>{id || '—'}</Text>
+            <Text style={{ color: colors.navy, fontWeight: '800', marginTop: spacing.sm }}>SSID</Text>
+            <Text style={{ color: colors.mutedStrong }}>{net || '—'}</Text>
+            <Text style={{ color: colors.navy, fontWeight: '800', marginTop: spacing.sm }}>Firebase paths</Text>
+            <Text style={{ color: colors.mutedStrong, fontFamily: 'monospace', fontSize: 13 }}>
+              devices/{id || '{deviceId}'}/latest{'\n'}
+              devices/{id || '{deviceId}'}/status
+            </Text>
+          </View>
         </Card.Content>
       </Card>
 
-      <PrimaryButton label="Select device role" style={{ marginTop: spacing.lg }} onPress={() => router.push('/setup/select-device-role')} />
-      <SecondaryButton label="Back to dashboard" style={{ marginTop: spacing.sm }} onPress={() => router.replace('/(tabs)/dashboard')} />
+      <PrimaryButton label="View live dashboard" style={{ marginTop: spacing.lg }} onPress={() => router.replace('/(tabs)/dashboard')} />
+      <PrimaryButton
+        label="View device details"
+        style={{ marginTop: spacing.sm }}
+        onPress={() => {
+          if (id) router.replace(`/device/${id}`);
+        }}
+        disabled={!id}
+      />
+      <SecondaryButton label="Add another device" style={{ marginTop: spacing.sm }} onPress={() => router.replace('/setup/scan-device')} />
+      <SecondaryButton label="Select device role (LoRa)" style={{ marginTop: spacing.sm }} onPress={() => router.push('/setup/select-device-role')} />
     </AppScreen>
   );
 }

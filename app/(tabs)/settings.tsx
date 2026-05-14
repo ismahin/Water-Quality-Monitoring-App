@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { Text, View } from 'react-native';
 import { Divider, List, Switch } from 'react-native-paper';
 import { colors, spacing } from '../../constants/theme';
+import { isFirebaseConfigured, getFirebaseConfigErrorMessage } from '../../constants/env';
 import { useMockApp } from '../../context/MockAppContext';
 import { AppScreen } from '../../components/AppScreen';
 import { AppHeader } from '../../components/AppHeader';
@@ -19,6 +20,7 @@ export default function SettingsScreen() {
     themePref,
     setThemePref,
     logout,
+    firebaseRtdbConnected,
   } = useMockApp();
 
   return (
@@ -65,7 +67,24 @@ export default function SettingsScreen() {
       <Divider />
       <List.Section>
         <List.Subheader style={{ color: colors.mutedStrong, fontWeight: '800' }}>Data sync</List.Subheader>
-        <List.Item title="Sync status" titleStyle={{ fontWeight: '700' }} description="Mock: Active" descriptionStyle={{ color: colors.mutedStrong }} />
+        <List.Item
+          title="Firebase Realtime DB"
+          titleStyle={{ fontWeight: '700' }}
+          description={
+            !isFirebaseConfigured()
+              ? getFirebaseConfigErrorMessage() ?? 'Not configured'
+              : firebaseRtdbConnected
+                ? 'Connected'
+                : 'Disconnected'
+          }
+          descriptionStyle={{ color: colors.mutedStrong }}
+        />
+        <List.Item
+          title="Legacy mock sync"
+          titleStyle={{ fontWeight: '700' }}
+          description="Ponds / alerts / thresholds remain mock in Stage 1"
+          descriptionStyle={{ color: colors.mutedStrong }}
+        />
       </List.Section>
       <Divider />
       <List.Section>
@@ -96,7 +115,7 @@ export default function SettingsScreen() {
         />
       </View>
       <Text style={{ color: colors.mutedStrong, marginBottom: spacing.xxl, lineHeight: 20, fontSize: 13 }}>
-        AquaNode is a UI-first prototype. Real cloud sync is not enabled.
+        AquaNode Stage 1: live telemetry for one registered ESP32 via Firebase; BLE provisioning requires a development build.
       </Text>
     </AppScreen>
   );

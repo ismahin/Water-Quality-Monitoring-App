@@ -5,8 +5,6 @@ import { Router, Radio, Waypoints } from 'lucide-react-native';
 import { colors, radius, shadows, spacing } from '../../constants/theme';
 import { AppScreen } from '../../components/AppScreen';
 import { AppHeader } from '../../components/AppHeader';
-import { PrimaryButton } from '../../components/PrimaryButton';
-
 export default function AddDeviceScreen() {
   const router = useRouter();
 
@@ -67,8 +65,6 @@ export default function AddDeviceScreen() {
         </Card.Content>
         </Card>
       </Pressable>
-
-      <PrimaryButton label="Continue to scan" style={{ marginTop: spacing.lg }} onPress={() => router.push('/setup/scan-device')} />
     </AppScreen>
   );
 }

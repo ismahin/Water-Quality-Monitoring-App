@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Text } from 'react-native';
-import { Card, Snackbar, TextInput } from 'react-native-paper';
+import { Card, TextInput } from 'react-native-paper';
+import { NotificationSnackbar } from '../components/NotificationSnackbar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, shadows, spacing } from '../constants/theme';
 import { AppScreen } from '../components/AppScreen';
@@ -26,9 +27,7 @@ export default function ForgotPasswordScreen() {
             <PrimaryButton label="Send reset link" onPress={() => setSnack(true)} />
           </Card.Content>
         </Card>
-        <Snackbar visible={snack} onDismiss={() => setSnack(false)} duration={2500}>
-          Mock: reset link sent.
-        </Snackbar>
+        <NotificationSnackbar visible={snack} onDismiss={() => setSnack(false)} duration={2500} message="Mock: reset link sent." />
       </AppScreen>
     </LinearGradient>
   );

@@ -1,6 +1,11 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { SectionList, Text, View } from 'react-native';
+import { NotificationSnackbar } from '../../components/NotificationSnackbar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PENDING_AFTER_DEVICE_REMOVE_SNACKBAR } from '../../constants/appStorageKeys';
 import type { AquaDevice } from '../../types/device';
 import { colors, spacing } from '../../constants/theme';
 import { getParentName } from '../../constants/mockData';
@@ -10,35 +15,46 @@ import { AppHeader } from '../../components/AppHeader';
 import { DeviceStatusCard } from '../../components/DeviceStatusCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
 
-function groupTitle(role: AquaDevice['role']): string {
-  switch (role) {
-    case 'gateway':
-      return 'Gateway / Mother';
-    case 'relay':
-      return 'Relay Nodes';
-    case 'child':
-      return 'Child Nodes';
-    case 'single':
-      return 'Single Devices';
-  }
-}
-
 export default function DevicesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { devices } = useMockApp();
+  const { devices, registeredDevices } = useMockApp();
+  const [tabSnackbar, setTabSnackbar] = useState<string | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        try {
+          const m = await AsyncStorage.getItem(PENDING_AFTER_DEVICE_REMOVE_SNACKBAR);
+          if (!m || cancelled) return;
+          await AsyncStorage.removeItem(PENDING_AFTER_DEVICE_REMOVE_SNACKBAR);
+          setTabSnackbar(m);
+        } catch {
+          /* noop */
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
+
+  const liveIds = new Set(registeredDevices.map((r) => r.deviceId));
+  const demoDevices = devices.filter((d) => !liveIds.has(d.id));
+  const liveDevices = devices.filter((d) => liveIds.has(d.id));
 
   const order: AquaDevice['role'][] = ['gateway', 'relay', 'child', 'single'];
-  const sections = order
-    .map((role) => ({
-      title: groupTitle(role),
-      data: devices.filter((d) => d.role === role),
-    }))
-    .filter((s) => s.data.length > 0);
+  const demoDevicesFlat = order.flatMap((role) => demoDevices.filter((d) => d.role === role));
+
+  const sections =
+    liveDevices.length > 0
+      ? [{ title: 'Live Devices', data: liveDevices }, { title: 'Demo Devices', data: demoDevicesFlat }]
+      : [{ title: 'Demo Devices', data: demoDevicesFlat }];
 
   const listHeader = (
     <View>
-      <AppHeader title="Devices" subtitle="Grouped by role" />
+      <AppHeader title="Devices" subtitle={liveDevices.length ? 'Live + demo hardware' : 'Grouped by role'} />
       <PrimaryButton label="Add device" onPress={() => router.push('/setup/add-device')} />
     </View>
   );
@@ -70,6 +86,13 @@ export default function DevicesScreen() {
         stickySectionHeadersEnabled={false}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+      />
+      <NotificationSnackbar
+        visible={!!tabSnackbar}
+        onDismiss={() => setTabSnackbar(null)}
+        duration={6000}
+        message={tabSnackbar ?? ''}
+        style={{ marginBottom: Math.max(insets.bottom, spacing.md) }}
       />
     </AppScreen>
   );

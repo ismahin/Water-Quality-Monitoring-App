@@ -2,9 +2,37 @@ import type { SensorSnapshot } from './sensor';
 
 export type DeviceRole = 'single' | 'gateway' | 'relay' | 'child';
 
-export type DeviceOnlineStatus = 'online' | 'offline';
+export type DeviceOnlineStatus = 'online' | 'offline' | 'warning';
 
 export type CalibrationStatus = 'ok' | 'due' | 'overdue';
+
+/** Optional fields populated from Firebase for live gateway / single devices */
+export interface LiveFirebaseDeviceFields {
+  firebaseRole?: string;
+  hardwareMode?: string;
+  ip?: string;
+  wifiConnected?: boolean;
+  sensorMode?: string;
+  commandStream?: string;
+  removeRequested?: boolean;
+  reprovisionRequired?: boolean;
+  firebaseMessage?: string;
+  loraEnabled?: boolean;
+  loraInitialized?: boolean;
+  loraGatewayReady?: boolean;
+  loraFrequencyMhz?: number;
+  loraLastError?: string;
+  loraPacketCount?: number;
+  lastLoraRssi?: number;
+  lastLoraSnr?: number;
+  lastLoraPayload?: string;
+  /** True when Firebase says online but app has not received an update within the stale window */
+  telemetryStale?: boolean;
+  /** Raw firmware string from `latest.sensor_status` (e.g. MOCK) */
+  sensorStatus?: string;
+  /** Raw firmware string from `latest.calibration_status` */
+  firebaseCalibrationStatus?: string;
+}
 
 export interface BaseDevice {
   id: string;
@@ -22,7 +50,7 @@ export interface BaseDevice {
   availableFirmwareVersion?: string;
 }
 
-export interface GatewayDevice extends BaseDevice {
+export interface GatewayDevice extends BaseDevice, LiveFirebaseDeviceFields {
   role: 'gateway';
   wifiSsid: string;
   wifiRssi: number;
@@ -31,7 +59,7 @@ export interface GatewayDevice extends BaseDevice {
   childDeviceIds: string[];
 }
 
-export interface SingleDevice extends BaseDevice {
+export interface SingleDevice extends BaseDevice, LiveFirebaseDeviceFields {
   role: 'single';
   wifiSsid: string;
   wifiRssi: number;
