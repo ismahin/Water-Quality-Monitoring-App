@@ -71,7 +71,7 @@ export function NodeCard({ device, depth, isLast, onPress }: Props) {
           }}
         />
       </View>
-      <View style={{ flex: 1, paddingBottom: spacing.md, paddingLeft: spacing.sm }}>
+      <View style={{ flex: 1, paddingBottom: spacing.md, paddingLeft: spacing.sm + depth * 18 }}>
         <View
           style={{
             borderRadius: radius.xl,

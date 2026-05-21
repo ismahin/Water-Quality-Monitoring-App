@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { GatewayDevice, SingleDevice } from '../types/device';
+import type { AquaDevice } from '../types/device';
 import type { FirebaseDeviceSnapshot, FirebaseDeviceStatus, FirebaseLatestReading } from '../types/firebase';
 import {
   getDeviceOnce,
@@ -10,7 +10,7 @@ import { getFirebaseDb } from '../services/firebase/firebaseClient';
 import { isFirebaseConfigured } from '../constants/env';
 
 export interface UseLiveDeviceResult {
-  device: GatewayDevice | SingleDevice | null;
+  device: AquaDevice | null;
   latest: FirebaseLatestReading | null;
   status: FirebaseDeviceStatus | null;
   loading: boolean;

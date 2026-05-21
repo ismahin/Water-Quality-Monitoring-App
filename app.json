@@ -17,6 +17,7 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "AquaNode uses Bluetooth to discover and provision ESP32 water quality devices.",
+        "NSBluetoothPeripheralUsageDescription": "AquaNode uses Bluetooth to configure ESP32 water quality devices.",
         "NSLocationWhenInUseUsageDescription": "Location is required on some Android/iOS versions for Bluetooth scanning during device setup."
       }
     },
@@ -57,7 +58,8 @@
           "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to discover and provision nearby AquaNode ESP32 devices over Bluetooth.",
           "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use location for Bluetooth scanning and Wi-Fi provisioning where required by the OS."
         }
-      ]
+      ],
+      "react-native-ble-plx"
     ],
     "extra": {
       "router": {},

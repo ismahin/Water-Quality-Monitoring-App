@@ -1,5 +1,71 @@
 # Stage 1 integration testing checklist
 
+## Universal Firmware v2 integration tests
+
+Use a development build. BLE provisioning/config does not work in Expo Go unless the mock flags are enabled.
+
+A. Single device provisioning
+
+1. Put ESP32-S3 in provisioning mode and confirm it advertises `PROV_{deviceId}`.
+2. App: Add device -> Add Single / Gateway Device -> scan `PROV_`.
+3. Provision with a valid 2.4 GHz SSID/password and PoP `12345678`.
+4. Expected: device is registered locally and Firebase paths `devices/{deviceId}/latest` and `devices/{deviceId}/status` appear.
+
+B. Configure M1 as gateway
+
+1. App: Configure Existing Device -> scan `CFG_`.
+2. Set `deviceId=M1`, `networkId=POND_001`, `parentId=""`, `rootGatewayId=M1`, `gatewayUplinkEnabled=true`, `relayEnabled=false`.
+3. Expected: dashboard/detail show `GATEWAY`, LoRa status, Wi-Fi status, and live sensor values.
+
+C. Configure C1 as child under M1
+
+1. App: Add Child / Relay Node -> select M1 -> scan new `CFG_`.
+2. Set `deviceId=C1`, `parentId=M1`, `rootGatewayId=M1`, `gatewayUplinkEnabled=false`, `relayEnabled=false`.
+3. Expected: gateway receives `devices/M1/children/C1/latest`; app shows C1 as child.
+
+D. Convert C1 to relay
+
+1. Go near C1 and open Configure Existing Device for `CFG_C1`.
+2. Enable relay or use the Relay helper, saving `SET_CONFIG` with `relayEnabled=true`.
+3. Expected: C1 displays as `RELAY`.
+
+E. Configure C2 as child under C1
+
+1. App: Add Child / Relay Node -> select C1 -> scan new `CFG_`.
+2. Set `deviceId=C2`, `parentId=C1`, `rootGatewayId=M1`, `relayEnabled=false`.
+3. Expected: `devices/M1/children/C2/latest` appears and route/forwarding data is visible.
+
+F. Convert C2 to relay
+
+1. Configure `CFG_C2` and enable relay.
+2. Expected: app updates C2 to `RELAY`.
+
+G. Configure C3 as child under C2
+
+1. App: Add Child / Relay Node -> select C2 -> scan new `CFG_`.
+2. Set `deviceId=C3`, `parentId=C2`, `rootGatewayId=M1`.
+3. Expected: C3 latest appears under gateway children.
+
+H. Network tree
+
+1. Open M1 -> View Network Tree.
+2. Expected: tree shows `M1 -> C1 -> C2 -> C3`, using `parent_id`, `forwarded_by`, or route strings like `C3>C2>C1`.
+
+I. Remove gateway
+
+1. Open M1 detail -> Remove device.
+2. Expected: app writes `devices/M1/commands/reset_wifi`, waits for matching ACK, and removes local registration only after ACK or explicit local fallback.
+
+J. Wrong Wi-Fi password
+
+1. Provision with password `wrong` or `1234` when mock provisioning is enabled, or a deliberately wrong hardware password.
+2. Expected: app stays on Wi-Fi screen, clears password, and shows `Wrong Wi-Fi password. Please check and try again.`
+
+K. Toggle SINGLE vs NETWORK status update
+
+1. Flip the physical toggle while the detail screen is open.
+2. Expected: Firebase updates role/hardware mode and the app updates role chips, Auto-role status, and LoRa/Wi-Fi sections without re-provisioning.
+
 Use this list after a **development build** (BLE does not work in Expo Go).
 
 1. Firmware already uploaded and Wi-Fi provisioning mode ready.

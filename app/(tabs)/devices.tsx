@@ -40,21 +40,26 @@ export default function DevicesScreen() {
     }, []),
   );
 
-  const liveIds = new Set(registeredDevices.map((r) => r.deviceId));
-  const demoDevices = devices.filter((d) => !liveIds.has(d.id));
-  const liveDevices = devices.filter((d) => liveIds.has(d.id));
+  const registeredIds = new Set(registeredDevices.map((r) => r.deviceId));
+  const demoDevices = devices.filter((d) => !d.isLive);
+  const liveDevices = devices.filter((d) => d.isLive && registeredIds.has(d.id));
+  const liveNetworkDevices = devices.filter((d) => d.isLive && !registeredIds.has(d.id));
 
   const order: AquaDevice['role'][] = ['gateway', 'relay', 'child', 'single'];
   const demoDevicesFlat = order.flatMap((role) => demoDevices.filter((d) => d.role === role));
 
   const sections =
-    liveDevices.length > 0
-      ? [{ title: 'Live Devices', data: liveDevices }, { title: 'Demo Devices', data: demoDevicesFlat }]
+    liveDevices.length > 0 || liveNetworkDevices.length > 0
+      ? [
+          { title: 'Live Devices', data: liveDevices },
+          { title: 'Gateway Children / Relays', data: liveNetworkDevices },
+          { title: 'Demo Devices', data: demoDevicesFlat },
+        ].filter((section) => section.data.length > 0)
       : [{ title: 'Demo Devices', data: demoDevicesFlat }];
 
   const listHeader = (
     <View>
-      <AppHeader title="Devices" subtitle={liveDevices.length ? 'Live + demo hardware' : 'Grouped by role'} />
+      <AppHeader title="Devices" subtitle={liveDevices.length || liveNetworkDevices.length ? 'Live hardware + demo fallback' : 'Grouped by role'} />
       <PrimaryButton label="Add device" onPress={() => router.push('/setup/add-device')} />
     </View>
   );
@@ -78,7 +83,7 @@ export default function DevicesScreen() {
           <View style={{ marginBottom: spacing.md }}>
             <DeviceStatusCard
               device={item}
-              parentName={'parentId' in item ? getParentName(item) : undefined}
+              parentName={'parentId' in item ? getParentName(item) ?? item.parentId : undefined}
               onPress={() => router.push(`/device/${item.id}`)}
             />
           </View>

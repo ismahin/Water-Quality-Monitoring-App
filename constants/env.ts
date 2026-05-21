@@ -56,3 +56,15 @@ export function getFirebaseConfigErrorMessage(): string | null {
   if (missing.length === 0) return null;
   return `Missing Firebase configuration: ${missing.join(', ')}. Copy .env.example to .env and set values.`;
 }
+
+export function readPublicBooleanEnv(key: string, fallback = false): boolean {
+  const value = process.env[key];
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  return fallback;
+}
+
+export const MOCK_PROVISIONING_ENV = readPublicBooleanEnv('EXPO_PUBLIC_MOCK_PROVISIONING', false);
+export const MOCK_BLE_CONFIG_ENV = readPublicBooleanEnv('EXPO_PUBLIC_MOCK_BLE_CONFIG', false);

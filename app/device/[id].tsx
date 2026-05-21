@@ -6,6 +6,7 @@ import { ActivityIndicator, Button, Card, Chip, Dialog, Divider, Portal } from '
 import { CloudOff, CloudCheck } from 'lucide-react-native';
 import { NotificationSnackbar } from '../../components/NotificationSnackbar';
 import { LoRaStatusCard } from '../../components/LoRaStatusCard';
+import { AutoRoleCard } from '../../components/AutoRoleCard';
 import { colors, modalSurfaceFit, radius, shadows, spacing } from '../../constants/theme';
 import { getParentName } from '../../constants/mockData';
 import { usesLoraUi, usesWifiUi, isGatewayOrSingle, type GatewayDevice, type SingleDevice } from '../../types/device';
@@ -39,8 +40,9 @@ export default function DeviceDetailScreen() {
   const deviceId = String(id);
   const device = devices.find((d) => d.id === deviceId);
 
-  const isLive = isRegisteredLiveDevice(deviceId);
-  const live = useLiveDevice(isLive ? deviceId : undefined, firebaseRtdbConnected);
+  const isRegisteredOwnLive = isRegisteredLiveDevice(deviceId);
+  const isLive = !!device?.isLive || isRegisteredOwnLive;
+  const live = useLiveDevice(isRegisteredOwnLive ? deviceId : undefined, firebaseRtdbConnected);
   const snap = getLiveSnapshot(deviceId);
 
   const [removeConfirmVisible, setRemoveConfirmVisible] = useState(false);
@@ -147,7 +149,7 @@ export default function DeviceDetailScreen() {
     );
   }
 
-  const parentName = 'parentId' in device ? getParentName(device) : undefined;
+  const parentName = 'parentId' in device ? getParentName(device) ?? device.parentId : undefined;
   const showCloudStrip =
     usesWifiUi(device) &&
     (device.role === 'gateway'
@@ -157,6 +159,14 @@ export default function DeviceDetailScreen() {
   const ip = live.latest?.ip ?? live.status?.ip ?? (isGatewayOrSingle(device) ? (device as SingleDevice | GatewayDevice).ip : undefined);
   const firebaseReady = isFirebaseConfigured();
   const liveW = isLive && isGatewayOrSingle(device) ? (device as SingleDevice | GatewayDevice) : null;
+  const removeRoleWarning =
+    device.role === 'gateway'
+      ? 'Removing this gateway will disconnect child and relay nodes from the app until another gateway receives them.'
+      : device.role === 'relay'
+        ? 'Removing this relay may stop downstream child nodes from reaching the gateway.'
+        : device.role === 'child'
+          ? 'Removing this child will reset its Wi-Fi/config and return it to setup mode.'
+          : 'This will remove the device from your app and reset its saved Wi-Fi.';
 
   return (
     <AppScreen>
@@ -177,7 +187,7 @@ export default function DeviceDetailScreen() {
             Live Firebase
           </Chip>
           <Chip compact style={{ backgroundColor: '#E0F2FE' }} textStyle={{ fontWeight: '800', fontSize: 11, color: colors.navy }}>
-            {liveW?.firebaseRole ?? device.role.toUpperCase()}
+            {device.universalRole ?? liveW?.firebaseRole ?? device.role.toUpperCase()}
           </Chip>
           {liveW?.telemetryStale ? (
             <Chip compact style={{ backgroundColor: '#FEF3C7' }} textStyle={{ fontWeight: '800', fontSize: 11, color: colors.warning }}>
@@ -297,6 +307,17 @@ export default function DeviceDetailScreen() {
             </View>
           </Card.Content>
         </Card>
+      ) : null}
+
+      {isLive ? (
+        <View style={{ marginTop: spacing.md }}>
+          <AutoRoleCard
+            role={device.universalRole ?? liveW?.firebaseRole ?? device.role.toUpperCase()}
+            hardwareMode={String(device.hardwareMode ?? liveW?.hardwareMode ?? '')}
+            gatewayUplinkEnabled={device.gatewayUplinkEnabled ?? liveW?.gatewayUplinkEnabled}
+            relayEnabled={device.relayEnabled ?? liveW?.relayEnabled}
+          />
+        </View>
       ) : null}
 
       {usesWifiUi(device) ? (
@@ -442,6 +463,28 @@ export default function DeviceDetailScreen() {
         </>
       ) : null}
 
+      {isLive ? (
+        <Card
+          style={{
+            marginTop: spacing.md,
+            borderRadius: radius.xl,
+            ...shadows.soft,
+            backgroundColor: colors.card,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        >
+          <Card.Content style={{ gap: spacing.sm }}>
+            <Text style={{ fontWeight: '900', color: colors.navy, fontSize: 16 }}>Parent / root / network</Text>
+            <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Network: {device.networkId || '-'}</Text>
+            <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Parent: {device.parentId || '-'}</Text>
+            <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Root gateway: {device.rootGatewayId || device.gatewayId || '-'}</Text>
+            {device.route ? <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Route: {device.route}</Text> : null}
+            {device.forwardedBy ? <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Forwarded by: {device.forwardedBy}</Text> : null}
+          </Card.Content>
+        </Card>
+      ) : null}
+
       {usesLoraUi(device) ? (
         <Card
           style={{
@@ -456,6 +499,8 @@ export default function DeviceDetailScreen() {
           <Card.Content style={{ gap: spacing.sm }}>
             <Text style={{ fontWeight: '900', color: colors.navy, fontSize: 16 }}>LoRa uplink</Text>
             <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Parent: {parentName ?? device.parentId}</Text>
+            {device.forwardedBy ? <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Forwarded by: {device.forwardedBy}</Text> : null}
+            {device.route ? <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Route: {device.route}</Text> : null}
             <SignalStrengthBar
               type="lora"
               rssi={device.loraRssi}
@@ -470,6 +515,19 @@ export default function DeviceDetailScreen() {
                 Last packet: {formatRelativeTime(device.lastDataAt)}
               </Text>
             ) : null}
+            <LoRaStatusCard
+              enabled
+              ready={device.loraStatus !== 'error'}
+              childRssi={device.childRssi}
+              childSnr={device.childSnr}
+              gatewayRssi={device.gatewayRssi}
+              gatewaySnr={device.gatewaySnr}
+              lastRssi={device.loraRssi}
+              lastSnr={device.loraSnr}
+              error={device.loraLastError}
+              packetCount={device.isLive ? 1 : 0}
+              showNoPacketMessage={!device.isLive}
+            />
           </Card.Content>
         </Card>
       ) : null}
@@ -539,7 +597,7 @@ export default function DeviceDetailScreen() {
         </View>
       ) : null}
 
-      {device.role === 'relay' ? (
+      {device.role === 'relay' && !isLive ? (
         <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
           <PrimaryButton label="Add Child Under This Relay" onPress={() => router.push('/setup/add-child-node')} />
           <SecondaryButton label="LoRa Signal Test" onPress={() => router.push({ pathname: '/setup/lora-signal-test', params: { deviceId: device.id } })} />
@@ -549,7 +607,7 @@ export default function DeviceDetailScreen() {
         </View>
       ) : null}
 
-      {device.role === 'child' ? (
+      {device.role === 'child' && !isLive ? (
         <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
           <SecondaryButton label="LoRa Signal Test" onPress={() => router.push({ pathname: '/setup/lora-signal-test', params: { deviceId: device.id } })} />
           <SecondaryButton label="Calibration" onPress={() => router.push('/setup/calibration-start')} />
@@ -568,11 +626,41 @@ export default function DeviceDetailScreen() {
       {isLive && usesWifiUi(device) ? (
         <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
           <PrimaryButton label="Refresh" onPress={() => void live.refresh()} />
+          <SecondaryButton
+            label="Configure Device"
+            onPress={() => router.push({ pathname: '/setup/config-device', params: { deviceName: `CFG_${device.id}`, deviceId: device.id } })}
+          />
           <SecondaryButton label="Re-provision Wi‑Fi" onPress={goToReprovisionWifi} />
           <SecondaryButton label="View Firebase paths" onPress={() => setFirebasePathsVisible(true)} />
+          <SecondaryButton label="View Network Tree" onPress={() => router.push({ pathname: '/device/network-tree', params: { deviceId: device.rootGatewayId || device.id } })} />
+          <SecondaryButton label="View Signal Test" onPress={() => router.push({ pathname: '/setup/lora-signal-test', params: { gatewayId: device.rootGatewayId || device.id, deviceId: device.id } })} />
           <SecondaryButton label="Diagnostics" onPress={() => router.push({ pathname: '/device/diagnostics', params: { deviceId: device.id } })} />
           <SecondaryButton label="Sensor calibration" onPress={() => router.push('/setup/calibration-start')} />
           <SecondaryButton label="Firmware update" onPress={() => router.push({ pathname: '/device/firmware-update', params: { deviceId: device.id } })} />
+          <DestructiveButton label="Remove device" onPress={openRemoveConfirm} />
+        </View>
+      ) : null}
+
+      {isLive && usesLoraUi(device) ? (
+        <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
+          <PrimaryButton
+            label="Configure Device"
+            onPress={() =>
+              router.push({
+                pathname: '/setup/config-device',
+                params: {
+                  deviceName: `CFG_${device.id}`,
+                  deviceId: device.id,
+                  targetRole: device.role,
+                  parentId: device.parentId,
+                  rootGatewayId: device.rootGatewayId || device.gatewayId,
+                  networkId: device.networkId,
+                },
+              })
+            }
+          />
+          <SecondaryButton label="View Network Tree" onPress={() => router.push({ pathname: '/device/network-tree', params: { deviceId: device.rootGatewayId || device.gatewayId || device.id } })} />
+          <SecondaryButton label="View Signal Test" onPress={() => router.push({ pathname: '/setup/lora-signal-test', params: { gatewayId: device.rootGatewayId || device.gatewayId, deviceId: device.id } })} />
           <DestructiveButton label="Remove device" onPress={openRemoveConfirm} />
         </View>
       ) : null}
@@ -581,6 +669,9 @@ export default function DeviceDetailScreen() {
         <Dialog visible={removeConfirmVisible} onDismiss={() => setRemoveConfirmVisible(false)} style={modalSurfaceFit}>
           <Dialog.Title>Remove device?</Dialog.Title>
           <Dialog.Content>
+            <Text style={{ color: colors.warning, fontWeight: '800', lineHeight: 20, marginBottom: spacing.sm }}>
+              {removeRoleWarning}
+            </Text>
             <Text style={{ color: colors.mutedStrong, lineHeight: 22 }}>
               This will remove the device from your app and reset its saved Wi‑Fi. The device will return to provisioning mode.
             </Text>

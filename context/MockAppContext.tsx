@@ -9,11 +9,11 @@ import React, {
   useState,
 } from 'react';
 import type { AquaAlert } from '../types/alert';
-import type { AquaDevice, GatewayDevice, SingleDevice } from '../types/device';
+import type { AquaDevice, ChildDevice, GatewayDevice, RelayDevice, SingleDevice } from '../types/device';
 import type { Pond } from '../types/pond';
 import type { SensorThresholds } from '../types/sensor';
-import type { FirebaseDeviceSnapshot } from '../types/firebase';
-import type { RegisteredDevice } from '../types/registeredDevice';
+import type { FirebaseChildSnapshot, FirebaseDeviceSnapshot, FirebaseNetworkNode } from '../types/firebase';
+import type { RegisteredDevice, UniversalRole } from '../types/universalDevice';
 import { isFirebaseConfigured } from '../constants/env';
 import {
   mockAlerts as seedAlerts,
@@ -24,8 +24,11 @@ import {
 } from '../constants/mockData';
 import { getFirebaseDb } from '../services/firebase/firebaseClient';
 import {
-  mapFirebaseDeviceToAquaDevice,
-  subscribeToDevice,
+  mapFirebaseChildToAppDevice,
+  mapFirebaseOwnDeviceToAppDevice,
+  subscribeToDeviceChildren,
+  subscribeToDeviceNetwork,
+  subscribeToOwnDevice,
 } from '../services/firebase/deviceTelemetryService';
 
 const KEYS = {
@@ -37,6 +40,17 @@ const KEYS = {
 export type TempUnit = 'C' | 'F';
 export type TdsUnit = 'ppm' | 'ec';
 export type AppThemePref = 'light' | 'system';
+
+type AddRegisteredOptions = {
+  name?: string;
+  networkId?: string;
+  roleHint?: UniversalRole | string;
+  rootGatewayId?: string;
+  parentId?: string;
+  bleProvisionName?: string;
+  bleConfigName?: string;
+  pondId?: string;
+};
 
 interface MockAppState {
   user: typeof mockUser;
@@ -50,7 +64,6 @@ interface MockAppState {
   notificationsEnabled: boolean;
   hasCompletedOnboarding: boolean;
   mockLoggedIn: boolean;
-  /** Session + onboarding + registered devices hydration */
   hydrated: boolean;
   registeredDevices: RegisteredDevice[];
   firebaseRtdbConnected: boolean;
@@ -67,32 +80,141 @@ interface MockAppContextValue extends MockAppState {
   setNotificationsEnabled: (v: boolean) => void;
   addPond: (p: Omit<Pond, 'id'>) => void;
   logout: () => Promise<void>;
-  addRegisteredDevice: (deviceId: string, options?: { bleProvisionName?: string }) => Promise<void>;
+  addRegisteredDevice: (deviceId: string, options?: AddRegisteredOptions) => Promise<void>;
   removeRegisteredDevice: (deviceId: string) => Promise<void>;
-  getLiveDevice: (deviceId: string) => GatewayDevice | SingleDevice | null;
+  updateRegisteredDeviceName: (deviceId: string, name: string) => Promise<void>;
+  getLiveDevice: (deviceId: string) => AquaDevice | null;
   getLiveSnapshot: (deviceId: string) => FirebaseDeviceSnapshot | undefined;
+  getGatewayChildren: (gatewayId: string) => AquaDevice[];
+  getNetworkTree: (gatewayId: string) => AquaDevice[];
+  getGatewayNetwork: (gatewayId: string) => Record<string, FirebaseNetworkNode>;
   isRegisteredLiveDevice: (deviceId: string) => boolean;
 }
 
 const MockAppContext = createContext<MockAppContextValue | null>(null);
 
-function placeholderSingle(reg: RegisteredDevice, firebaseRtdbConnected: boolean): SingleDevice {
-  return {
+function normalizeRegistered(raw: unknown): RegisteredDevice[] {
+  if (!Array.isArray(raw)) return [];
+  const out: RegisteredDevice[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const deviceId = typeof o.deviceId === 'string' ? o.deviceId.trim() : '';
+    if (!deviceId) continue;
+    const legacyRole = typeof o.role === 'string' ? o.role : undefined;
+    const roleHint =
+      typeof o.roleHint === 'string'
+        ? o.roleHint
+        : legacyRole === 'gateway'
+          ? 'GATEWAY'
+          : legacyRole === 'single'
+            ? 'SINGLE'
+            : undefined;
+    out.push({
+      deviceId,
+      name: typeof o.name === 'string' && o.name.trim() ? o.name : deviceId,
+      networkId: typeof o.networkId === 'string' ? o.networkId : '',
+      roleHint,
+      rootGatewayId: typeof o.rootGatewayId === 'string' ? o.rootGatewayId : undefined,
+      parentId: typeof o.parentId === 'string' ? o.parentId : undefined,
+      registeredAt:
+        typeof o.registeredAt === 'string'
+          ? o.registeredAt
+          : typeof o.provisionedAt === 'string'
+            ? o.provisionedAt
+            : new Date().toISOString(),
+      provisionedAt: typeof o.provisionedAt === 'string' ? o.provisionedAt : undefined,
+      pondId: typeof o.pondId === 'string' ? o.pondId : 'pond-a',
+      bleProvisionName: typeof o.bleProvisionName === 'string' ? o.bleProvisionName : undefined,
+      bleConfigName: typeof o.bleConfigName === 'string' ? o.bleConfigName : undefined,
+    });
+  }
+  return out;
+}
+
+function placeholderDevice(reg: RegisteredDevice, firebaseRtdbConnected: boolean): AquaDevice {
+  const roleHint = String(reg.roleHint ?? 'SINGLE').toUpperCase();
+  const now = reg.registeredAt || reg.provisionedAt || new Date().toISOString();
+  const base = {
     id: reg.deviceId,
     name: reg.name,
-    role: 'single',
-    pondId: reg.pondId,
-    online: 'offline',
+    pondId: reg.pondId ?? 'pond-a',
+    online: 'offline' as const,
     batteryPercent: 0,
-    lastSeenAt: reg.provisionedAt,
-    lastDataAt: reg.provisionedAt,
+    lastSeenAt: now,
+    lastDataAt: now,
     sensors: { ph: 0, tdsPpm: 0, temperatureC: 0, turbidityNtu: 0 },
-    calibrationStatus: 'ok',
+    calibrationStatus: 'ok' as const,
     firmwareVersion: '1.0.0',
-    wifiSsid: '—',
+    universalRole: roleHint as UniversalRole,
+    hardwareMode: roleHint === 'SINGLE' ? 'SINGLE' : 'NETWORK',
+    networkId: reg.networkId,
+    parentId: reg.parentId,
+    rootGatewayId: reg.rootGatewayId,
+    isLive: true,
+    isDemo: false,
+  };
+  if (roleHint === 'GATEWAY') {
+    return {
+      ...base,
+      role: 'gateway',
+      wifiSsid: '-',
+      wifiRssi: -100,
+      cloudOnline: firebaseRtdbConnected,
+      loraGatewayEnabled: false,
+      gatewayUplinkEnabled: true,
+      childDeviceIds: [],
+    } satisfies GatewayDevice;
+  }
+  if (roleHint === 'RELAY') {
+    return {
+      ...base,
+      role: 'relay',
+      parentId: reg.parentId ?? '',
+      relayEnabled: true,
+      loraRssi: -120,
+      loraSnr: 0,
+      packetSuccessPercent: 0,
+      childDeviceIds: [],
+    } satisfies RelayDevice;
+  }
+  if (roleHint === 'CHILD') {
+    return {
+      ...base,
+      role: 'child',
+      parentId: reg.parentId ?? '',
+      relayEnabled: false,
+      loraRssi: -120,
+      loraSnr: 0,
+      packetSuccessPercent: 0,
+    } satisfies ChildDevice;
+  }
+  return {
+    ...base,
+    role: 'single',
+    wifiSsid: '-',
     wifiRssi: -100,
     cloudOnline: firebaseRtdbConnected,
-  };
+  } satisfies SingleDevice;
+}
+
+function deviceSort(a: AquaDevice, b: AquaDevice): number {
+  const order = { gateway: 0, relay: 1, child: 2, single: 3 } as const;
+  return order[a.role] - order[b.role] || a.id.localeCompare(b.id);
+}
+
+function inferGatewayIds(registered: RegisteredDevice[], liveDevices: AquaDevice[]): string[] {
+  const ids = new Set<string>();
+  for (const reg of registered) {
+    const role = String(reg.roleHint ?? '').toUpperCase();
+    if (role === 'GATEWAY' || reg.rootGatewayId === reg.deviceId) ids.add(reg.deviceId);
+    if (reg.rootGatewayId) ids.add(reg.rootGatewayId);
+  }
+  for (const device of liveDevices) {
+    if (device.role === 'gateway' || device.universalRole === 'GATEWAY') ids.add(device.id);
+    if (device.rootGatewayId) ids.add(device.rootGatewayId);
+  }
+  return Array.from(ids).filter(Boolean);
 }
 
 export function MockAppProvider({ children }: { children: React.ReactNode }) {
@@ -109,6 +231,8 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
   const [registeredDevices, setRegisteredDevices] = useState<RegisteredDevice[]>([]);
   const [hydratedRegistered, setHydratedRegistered] = useState(false);
   const [liveSnapshots, setLiveSnapshots] = useState<Record<string, FirebaseDeviceSnapshot>>({});
+  const [childSnapshotsByGateway, setChildSnapshotsByGateway] = useState<Record<string, Record<string, FirebaseChildSnapshot>>>({});
+  const [networkByGateway, setNetworkByGateway] = useState<Record<string, Record<string, FirebaseNetworkNode>>>({});
   const [firebaseRtdbConnected, setFirebaseRtdbConnected] = useState(false);
 
   useEffect(() => {
@@ -125,17 +249,7 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
           setMockLoggedInState(s === '1');
           if (regRaw) {
             try {
-              const parsed = JSON.parse(regRaw) as unknown;
-              if (Array.isArray(parsed)) {
-                const cleaned = parsed.filter(
-                  (x): x is RegisteredDevice =>
-                    x &&
-                    typeof x === 'object' &&
-                    typeof (x as RegisteredDevice).deviceId === 'string' &&
-                    ((x as RegisteredDevice).role === 'single' || (x as RegisteredDevice).role === 'gateway'),
-                );
-                setRegisteredDevices(cleaned.slice(0, 1));
-              }
+              setRegisteredDevices(normalizeRegistered(JSON.parse(regRaw)));
             } catch {
               setRegisteredDevices([]);
             }
@@ -164,10 +278,9 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
       setFirebaseRtdbConnected(false);
       return;
     }
-    const r = ref(db, '.info/connected');
     let unsub: Unsubscribe | undefined;
     try {
-      unsub = onValue(r, (snap) => setFirebaseRtdbConnected(snap.val() === true));
+      unsub = onValue(ref(db, '.info/connected'), (snap) => setFirebaseRtdbConnected(snap.val() === true));
     } catch {
       setFirebaseRtdbConnected(false);
     }
@@ -181,18 +294,82 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
       setLiveSnapshots({});
       return;
     }
-    const unsubs: (() => void)[] = [];
-    for (const reg of registeredDevices) {
+    const unsubs = registeredDevices.map((reg) =>
+      subscribeToOwnDevice(reg.deviceId, (snap) => {
+        setLiveSnapshots((prev) => ({ ...prev, [reg.deviceId]: snap }));
+      }),
+    );
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [registeredDevices]);
+
+  const ownLiveDevices = useMemo(() => {
+    return registeredDevices.map((reg) => {
+      const snap = liveSnapshots[reg.deviceId];
+      if (!snap) return placeholderDevice(reg, firebaseRtdbConnected);
+      return mapFirebaseOwnDeviceToAppDevice(
+        reg.deviceId,
+        snap.latest,
+        snap.status,
+        snap.receivedAt,
+        firebaseRtdbConnected,
+        reg.name,
+      );
+    });
+  }, [registeredDevices, liveSnapshots, firebaseRtdbConnected]);
+
+  const gatewayIds = useMemo(() => inferGatewayIds(registeredDevices, ownLiveDevices), [registeredDevices, ownLiveDevices]);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured() || !getFirebaseDb()) {
+      setChildSnapshotsByGateway({});
+      setNetworkByGateway({});
+      return;
+    }
+    const unsubs: Array<() => void> = [];
+    for (const gatewayId of gatewayIds) {
       unsubs.push(
-        subscribeToDevice(reg.deviceId, (snap) => {
-          setLiveSnapshots((prev) => ({ ...prev, [reg.deviceId]: snap }));
+        subscribeToDeviceChildren(gatewayId, (childrenForGateway) => {
+          setChildSnapshotsByGateway((prev) => ({ ...prev, [gatewayId]: childrenForGateway }));
+        }),
+      );
+      unsubs.push(
+        subscribeToDeviceNetwork(gatewayId, (networkForGateway) => {
+          setNetworkByGateway((prev) => ({ ...prev, [gatewayId]: networkForGateway }));
         }),
       );
     }
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [registeredDevices]);
+  }, [gatewayIds]);
+
+  const liveChildDevices = useMemo(() => {
+    const out: AquaDevice[] = [];
+    for (const gatewayId of gatewayIds) {
+      const children = childSnapshotsByGateway[gatewayId] ?? {};
+      const network = networkByGateway[gatewayId] ?? {};
+      const childIds = new Set([...Object.keys(children), ...Object.keys(network)]);
+      for (const sourceId of childIds) {
+        const child = children[sourceId];
+        const net = network[sourceId];
+        const reg = registeredDevices.find((r) => r.deviceId === sourceId);
+        out.push(
+          mapFirebaseChildToAppDevice(
+            gatewayId,
+            sourceId,
+            child?.latest ?? null,
+            child?.status ?? null,
+            net ?? child?.network ?? null,
+            child?.receivedAt ?? new Date().toISOString(),
+            reg?.name,
+          ),
+        );
+      }
+    }
+    return out.sort(deviceSort);
+  }, [gatewayIds, childSnapshotsByGateway, networkByGateway, registeredDevices]);
 
   const setHasCompletedOnboarding = useCallback(async (v: boolean) => {
     setHasCompletedOnboardingState(v);
@@ -221,27 +398,31 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
     await setMockLoggedIn(false);
   }, [setMockLoggedIn]);
 
-  const addRegisteredDevice = useCallback(async (deviceId: string, options?: { bleProvisionName?: string }) => {
+  const addRegisteredDevice = useCallback(async (deviceId: string, options?: AddRegisteredOptions) => {
     const id = deviceId.trim();
-    const fromOpts = options?.bleProvisionName?.trim();
+    if (!id) return;
     const bleProvisionName =
-      fromOpts && fromOpts.startsWith('PROV_')
-        ? fromOpts
+      options?.bleProvisionName?.startsWith('PROV_')
+        ? options.bleProvisionName
         : id.startsWith('PROV_')
           ? id
-          : `PROV_${id}`;
-
+          : options?.bleProvisionName;
     setRegisteredDevices((prev) => {
       const existing = prev.find((r) => r.deviceId === id);
       const entry: RegisteredDevice = {
         deviceId: id,
-        name: existing?.name ?? id,
-        role: existing?.role ?? 'single',
-        pondId: existing?.pondId ?? 'pond-a',
+        name: options?.name?.trim() || existing?.name || id,
+        networkId: options?.networkId ?? existing?.networkId ?? '',
+        roleHint: options?.roleHint ?? existing?.roleHint,
+        rootGatewayId: options?.rootGatewayId ?? existing?.rootGatewayId,
+        parentId: options?.parentId ?? existing?.parentId,
+        registeredAt: existing?.registeredAt ?? new Date().toISOString(),
         provisionedAt: existing?.provisionedAt ?? new Date().toISOString(),
+        pondId: options?.pondId ?? existing?.pondId ?? 'pond-a',
         bleProvisionName,
+        bleConfigName: options?.bleConfigName ?? existing?.bleConfigName,
       };
-      return [entry];
+      return [entry, ...prev.filter((r) => r.deviceId !== id)];
     });
   }, []);
 
@@ -254,24 +435,45 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const updateRegisteredDeviceName = useCallback(async (deviceId: string, name: string) => {
+    setRegisteredDevices((prev) =>
+      prev.map((d) => (d.deviceId === deviceId ? { ...d, name: name.trim() || d.deviceId } : d)),
+    );
+  }, []);
+
   const getLiveSnapshot = useCallback(
     (deviceId: string): FirebaseDeviceSnapshot | undefined => liveSnapshots[deviceId],
     [liveSnapshots],
   );
 
+  const allLiveDevices = useMemo(() => [...ownLiveDevices, ...liveChildDevices].sort(deviceSort), [ownLiveDevices, liveChildDevices]);
+
   const getLiveDevice = useCallback(
-    (deviceId: string): GatewayDevice | SingleDevice | null => {
-      const snap = liveSnapshots[deviceId];
-      if (!snap) return null;
-      return mapFirebaseDeviceToAquaDevice(
-        deviceId,
-        snap.latest,
-        snap.status,
-        snap.receivedAt,
-        firebaseRtdbConnected,
-      );
+    (deviceId: string): AquaDevice | null => allLiveDevices.find((d) => d.id === deviceId || d.sourceId === deviceId) ?? null,
+    [allLiveDevices],
+  );
+
+  const getGatewayChildren = useCallback(
+    (gatewayId: string): AquaDevice[] =>
+      allLiveDevices
+        .filter((d) => d.gatewayId === gatewayId || d.rootGatewayId === gatewayId)
+        .filter((d) => d.id !== gatewayId)
+        .sort(deviceSort),
+    [allLiveDevices],
+  );
+
+  const getGatewayNetwork = useCallback(
+    (gatewayId: string): Record<string, FirebaseNetworkNode> => networkByGateway[gatewayId] ?? {},
+    [networkByGateway],
+  );
+
+  const getNetworkTree = useCallback(
+    (gatewayId: string): AquaDevice[] => {
+      const root = allLiveDevices.find((d) => d.id === gatewayId) ?? seedDevices.find((d) => d.id === gatewayId);
+      const childrenForGateway = getGatewayChildren(gatewayId);
+      return root ? [root, ...childrenForGateway] : childrenForGateway;
     },
-    [liveSnapshots, firebaseRtdbConnected],
+    [allLiveDevices, getGatewayChildren],
   );
 
   const isRegisteredLiveDevice = useCallback(
@@ -283,28 +485,17 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
     () =>
       pondsBase.map((p) => {
         if (p.id !== 'pond-a') return p;
-        const extra = registeredDevices.filter((r) => r.pondId === 'pond-a').map((r) => r.deviceId);
-        return { ...p, deviceIds: [...new Set([...p.deviceIds, ...extra])] };
+        const liveIds = allLiveDevices.map((d) => d.id);
+        return { ...p, deviceIds: [...new Set([...p.deviceIds, ...liveIds])] };
       }),
-    [pondsBase, registeredDevices],
+    [pondsBase, allLiveDevices],
   );
 
   const devices = useMemo(() => {
-    const liveIds = new Set(registeredDevices.map((r) => r.deviceId));
-    const base = seedDevices.filter((d) => !liveIds.has(d.id));
-    const liveDevices: AquaDevice[] = registeredDevices.map((reg) => {
-      const snap = liveSnapshots[reg.deviceId];
-      if (!snap) return placeholderSingle(reg, firebaseRtdbConnected);
-      return mapFirebaseDeviceToAquaDevice(
-        reg.deviceId,
-        snap.latest,
-        snap.status,
-        snap.receivedAt,
-        firebaseRtdbConnected,
-      );
-    });
-    return [...liveDevices, ...base];
-  }, [registeredDevices, liveSnapshots, firebaseRtdbConnected]);
+    const liveIds = new Set(allLiveDevices.map((d) => d.id));
+    const base = seedDevices.filter((d) => !liveIds.has(d.id)).map((d) => ({ ...d, isDemo: true, isLive: false }));
+    return [...allLiveDevices, ...base];
+  }, [allLiveDevices]);
 
   const fullyHydrated = hydrated && hydratedRegistered;
 
@@ -336,8 +527,12 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
       logout,
       addRegisteredDevice,
       removeRegisteredDevice,
+      updateRegisteredDeviceName,
       getLiveDevice,
       getLiveSnapshot,
+      getGatewayChildren,
+      getNetworkTree,
+      getGatewayNetwork,
       isRegisteredLiveDevice,
     }),
     [
@@ -362,8 +557,12 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
       logout,
       addRegisteredDevice,
       removeRegisteredDevice,
+      updateRegisteredDeviceName,
       getLiveDevice,
       getLiveSnapshot,
+      getGatewayChildren,
+      getNetworkTree,
+      getGatewayNetwork,
       isRegisteredLiveDevice,
     ],
   );

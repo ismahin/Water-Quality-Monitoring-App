@@ -1,15 +1,16 @@
 import * as Location from 'expo-location';
-import Constants from 'expo-constants';
-import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Linking, Platform, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Button, Card, Dialog, Portal } from 'react-native-paper';
+import { Bluetooth, Radio } from 'lucide-react-native';
 import {
   requestAndroidBleRuntimePermissions,
   requestAndroidFineLocationRuntimePermission,
 } from '../../utils/requestAndroidBlePermissions';
 import { openBluetoothSystemSettings } from '../../utils/openBluetoothSystemSettings';
-import { ActivityIndicator, Button, Card, Dialog, Portal } from 'react-native-paper';
 import { MOCK_PROVISIONING, scanProvisioningDevices, stopScan } from '../../services/provisioning/espProvisioningService';
+import { MOCK_BLE_CONFIG, parseDeviceIdFromConfigName, scanConfigDevices } from '../../services/ble/bleConfigService';
 import { colors, modalSurfaceFit, radius, shadows, spacing } from '../../constants/theme';
 import { AppScreen } from '../../components/AppScreen';
 import { AppHeader } from '../../components/AppHeader';
@@ -24,33 +25,59 @@ import {
   type LastBleProvisioningTarget,
 } from '../../services/provisioning/lastBleProvisioningTarget';
 
+type ScanMode = 'provision' | 'config';
+type ScanItem = { id: string; name: string; rssi: number; transport: 'ble' | 'ble-config' };
 type DialogAction = { label: string; onPress: () => void; variant?: 'text' | 'contained' };
-
-type ScanDialogState = {
-  title: string;
-  message: string;
-  actions: DialogAction[];
-} | null;
+type ScanDialogState = { title: string; message: string; actions: DialogAction[] } | null;
 
 function humanizeScanError(raw: string): string {
   const s = raw.replace(/^java\.lang\.Error:\s*/i, '').replace(/^error:\s*/i, '').trim();
   if (!s) return 'Something went wrong while scanning.';
-  if (s.length > 240) return `${s.slice(0, 237)}…`;
+  if (s.length > 240) return `${s.slice(0, 237)}...`;
   return s;
 }
 
 export default function ScanDeviceScreen() {
   const router = useRouter();
+  const {
+    mode: modeParam,
+    targetRole,
+    parentId,
+    rootGatewayId,
+    networkId,
+  } = useLocalSearchParams<{ mode?: string; targetRole?: string; parentId?: string; rootGatewayId?: string; networkId?: string }>();
+  const mode: ScanMode = modeParam === 'config' ? 'config' : 'provision';
   const [scanning, setScanning] = useState(false);
-  const [items, setItems] = useState<{ id: string; name: string; rssi: number }[]>([]);
+  const [items, setItems] = useState<ScanItem[]>([]);
   const [dialog, setDialog] = useState<ScanDialogState>(null);
   const [lastTarget, setLastTarget] = useState<LastBleProvisioningTarget | null>(null);
 
-  const isExpoGo = Constants.appOwnership === 'expo';
+  const scanCopy = useMemo(() => {
+    if (mode === 'config') {
+      return {
+        title: 'Scan config device',
+        prefix: 'CFG_',
+        transport: 'BLE config',
+        stepTitle: 'Discover CFG device',
+        description: MOCK_BLE_CONFIG
+          ? 'Mock CFG scan is enabled for UI testing.'
+          : 'Turn on Bluetooth and select a device advertising CFG_.',
+      };
+    }
+    return {
+      title: 'Scan device',
+      prefix: 'PROV_',
+      transport: 'Wi-Fi provisioning',
+      stepTitle: 'Discover nearby device',
+      description: MOCK_PROVISIONING
+        ? 'Mock provisioning scan is enabled for UI testing.'
+        : 'Turn on Bluetooth and select your device (name looks like PROV_WQM_...).',
+    };
+  }, [mode]);
 
   useEffect(() => {
-    void loadLastBleProvisioningTarget().then(setLastTarget);
-  }, []);
+    if (mode === 'provision') void loadLastBleProvisioningTarget().then(setLastTarget);
+  }, [mode]);
 
   const closeDialog = useCallback(() => setDialog(null), []);
 
@@ -81,26 +108,6 @@ export default function ScanDeviceScreen() {
         return false;
       }
     }
-    return true;
-  }, []);
-
-  const runScan = useCallback(async () => {
-    setDialog(null);
-    if (isExpoGo && !MOCK_PROVISIONING) {
-      setDialog({
-        title: 'Expo Go limitation',
-        message:
-          'BLE provisioning does not run in Expo Go. Create a development build with npx expo prebuild && npx expo run:android, or set EXPO_PUBLIC_MOCK_PROVISIONING=true to preview the UI.',
-        actions: [{ label: 'OK', variant: 'contained', onPress: () => setDialog(null) }],
-      });
-      return;
-    }
-
-    const ok = await requestPermissions();
-    if (!ok) {
-      console.log('[AquaNode][scan-device] Location permission gate failed');
-      return;
-    }
 
     const ble = await requestAndroidBleRuntimePermissions();
     if (!ble.ok) {
@@ -112,92 +119,57 @@ export default function ScanDeviceScreen() {
           { label: 'Not now', onPress: () => setDialog(null) },
         ],
       });
-      console.log('[AquaNode][scan-device] Android Bluetooth runtime permission gate failed:', ble.message);
-      return;
+      return false;
     }
+    return true;
+  }, []);
+
+  const runScan = useCallback(async () => {
+    setDialog(null);
+    const ok = await requestPermissions();
+    if (!ok) return;
 
     setScanning(true);
     setItems([]);
-    const scanOnce = async () => scanProvisioningDevices('PROV_');
-
     try {
-      console.log('[AquaNode][scan-device] Starting BLE provisioning scan (prefix PROV_)…');
-      const found = await scanOnce();
-      console.log('[AquaNode][scan-device] Scan finished, devices:', found.length, found.map((d) => d.name));
+      const found =
+        mode === 'config'
+          ? await scanConfigDevices('CFG_')
+          : await scanProvisioningDevices('PROV_');
       setItems(found);
       if (found.length === 0) {
-        const persisted = await loadLastBleProvisioningTarget();
-        if (persisted) setLastTarget(persisted);
-        if (!persisted) {
-          setDialog({
-            title: 'No devices found',
-            message:
-              'No ESP32 was found advertising a provisioning name that starts with PROV_. Power the device, confirm it is in BLE provisioning mode, move closer, then try again.',
-            actions: [
-              { label: 'Rescan', variant: 'contained', onPress: () => setDialog(null) },
-              { label: 'Close', onPress: () => setDialog(null) },
-            ],
-          });
-        }
-      }
-    } catch (e) {
-      let lastErr: unknown = e;
-      console.log('[AquaNode][scan-device] scanProvisioningDevices threw:', e instanceof Error ? e.message : e);
-      const msg = e instanceof Error ? e.message : String(e);
-      const low = msg.toLowerCase();
-      const isScanNotStarted = low.includes('scan could not be started');
-
-      if (isScanNotStarted) {
-        console.log('[AquaNode][scan-device] Retrying scan once after delay (adapter may not be ready yet)…');
-        await new Promise((r) => setTimeout(r, 800));
-        try {
-          const found = await scanOnce();
-          console.log('[AquaNode][scan-device] Retry OK, devices:', found.length);
-          setItems(found);
-          if (found.length === 0) {
-            const persisted = await loadLastBleProvisioningTarget();
-            if (persisted) setLastTarget(persisted);
-            if (!persisted) {
-              setDialog({
-                title: 'No devices found',
-                message:
-                  'No ESP32 was found advertising a provisioning name that starts with PROV_. Power the device, confirm it is in BLE provisioning mode, move closer, then try again.',
-                actions: [
-                  { label: 'Rescan', variant: 'contained', onPress: () => setDialog(null) },
-                  { label: 'Close', onPress: () => setDialog(null) },
-                ],
-              });
-            }
+        if (mode === 'provision') {
+          const persisted = await loadLastBleProvisioningTarget();
+          if (persisted) {
+            setLastTarget(persisted);
+            return;
           }
-          return;
-        } catch (e2) {
-          console.log('[AquaNode][scan-device] Retry failed:', e2 instanceof Error ? e2.message : e2);
-          lastErr = e2;
         }
-      }
-
-      const msgFinal = lastErr instanceof Error ? lastErr.message : String(lastErr);
-      const lowFinal = msgFinal.toLowerCase();
-      if (lowFinal.includes('scan could not be started') || (lowFinal.includes('bluetooth') && (lowFinal.includes('off') || lowFinal.includes('disabled')))) {
         setDialog({
-          title: 'Turn on Bluetooth',
-          message:
-            Platform.OS === 'android'
-              ? 'Bluetooth must be on to find your device. Open Settings to enable Bluetooth, then return here and tap Rescan.'
-              : 'Bluetooth must be on to find your device. Open the Settings app to enable Bluetooth, then return here and tap Rescan.',
+          title: 'No devices found',
+          message: `No ESP32 was found advertising ${scanCopy.prefix}. Power the device, move closer, then try again.`,
           actions: [
-            {
-              label: 'Open Settings',
-              variant: 'contained',
-              onPress: () => void openBluetoothSystemSettings().finally(() => setDialog(null)),
-            },
+            { label: 'Rescan', variant: 'contained', onPress: () => void runScan() },
             { label: 'Close', onPress: () => setDialog(null) },
           ],
         });
-      } else if (lowFinal.includes('permission') || lowFinal.includes('denied')) {
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const low = msg.toLowerCase();
+      if (low.includes('bluetooth') && (low.includes('off') || low.includes('disabled'))) {
+        setDialog({
+          title: 'Turn on Bluetooth',
+          message: 'Bluetooth must be on to find your device. Open Settings, enable Bluetooth, then rescan.',
+          actions: [
+            { label: 'Open Settings', variant: 'contained', onPress: () => void openBluetoothSystemSettings().finally(() => setDialog(null)) },
+            { label: 'Close', onPress: () => setDialog(null) },
+          ],
+        });
+      } else if (low.includes('permission') || low.includes('denied')) {
         setDialog({
           title: 'Permission needed',
-          message: humanizeScanError(msgFinal),
+          message: humanizeScanError(msg),
           actions: [
             { label: 'Open settings', variant: 'contained', onPress: () => void Linking.openSettings().finally(() => setDialog(null)) },
             { label: 'Close', onPress: () => setDialog(null) },
@@ -206,25 +178,51 @@ export default function ScanDeviceScreen() {
       } else {
         setDialog({
           title: 'Scan issue',
-          message: humanizeScanError(msgFinal),
+          message: humanizeScanError(msg),
           actions: [{ label: 'OK', variant: 'contained', onPress: () => setDialog(null) }],
         });
       }
     } finally {
       setScanning(false);
-      stopScan();
+      if (mode === 'provision') stopScan();
     }
-  }, [isExpoGo, requestPermissions]);
+  }, [mode, requestPermissions, scanCopy.prefix]);
 
   useEffect(() => {
     void runScan();
-    return () => stopScan();
-  }, [runScan]);
+    return () => {
+      if (mode === 'provision') stopScan();
+    };
+  }, [runScan, mode]);
 
-  const onRescanFromDialog = useCallback(() => {
-    setDialog(null);
-    void runScan();
-  }, [runScan]);
+  const selectDevice = useCallback(
+    (d: ScanItem) => {
+      if (mode === 'config') {
+        router.push({
+          pathname: '/setup/config-device',
+          params: {
+            deviceName: d.name,
+            deviceId: parseDeviceIdFromConfigName(d.name),
+            rssi: String(d.rssi),
+            targetRole,
+            parentId,
+            rootGatewayId,
+            networkId,
+          },
+        });
+        return;
+      }
+      void (async () => {
+        await saveLastBleProvisioningTarget(d.name, d.rssi);
+        setLastTarget({ deviceName: d.name, rssi: d.rssi, updatedAt: new Date().toISOString() });
+        router.push({
+          pathname: '/setup/wifi-provisioning',
+          params: { name: d.name, rssi: String(d.rssi) },
+        });
+      })();
+    },
+    [mode, networkId, parentId, rootGatewayId, router, targetRole],
+  );
 
   return (
     <AppScreen scroll={false}>
@@ -242,17 +240,7 @@ export default function ScanDeviceScreen() {
               </Dialog.ScrollArea>
               <Dialog.Actions style={{ flexWrap: 'wrap', justifyContent: 'flex-end', gap: 4 }}>
                 {dialog.actions.map((a, i) => (
-                  <Button
-                    key={`${a.label}-${i}`}
-                    mode={a.variant === 'contained' ? 'contained' : 'text'}
-                    onPress={() => {
-                      if (a.label === 'Rescan' && dialog.title === 'No devices found') {
-                        onRescanFromDialog();
-                        return;
-                      }
-                      a.onPress();
-                    }}
-                  >
+                  <Button key={`${a.label}-${i}`} mode={a.variant === 'contained' ? 'contained' : 'text'} onPress={a.onPress}>
                     {a.label}
                   </Button>
                 ))}
@@ -266,20 +254,11 @@ export default function ScanDeviceScreen() {
         contentContainerStyle={{ paddingBottom: spacing.xxl }}
         refreshControl={<RefreshControl refreshing={scanning} onRefresh={() => void runScan()} />}
       >
-        <AppHeader title="Scan device" onBack={() => router.back()} />
+        <AppHeader title={scanCopy.title} subtitle={scanCopy.transport} onBack={() => router.back()} />
 
-        <SetupStepCard
-          step={1}
-          totalSteps={6}
-          title="Discover nearby device"
-          description={
-            isExpoGo
-              ? 'Expo Go cannot use BLE provisioning. Use a dev build or EXPO_PUBLIC_MOCK_PROVISIONING=true.'
-              : 'Turn on Bluetooth and select your device (name looks like PROV_WQM_…).'
-          }
-        />
+        <SetupStepCard step={1} totalSteps={mode === 'config' ? 3 : 6} title={scanCopy.stepTitle} description={scanCopy.description} />
 
-        {lastTarget ? (
+        {mode === 'provision' && lastTarget ? (
           <Card
             style={{
               marginTop: spacing.md,
@@ -291,13 +270,12 @@ export default function ScanDeviceScreen() {
             }}
           >
             <Card.Content style={{ gap: spacing.sm }}>
-              <Text style={{ fontWeight: '900', color: colors.navy }}>Resume Wi‑Fi setup</Text>
+              <Text style={{ fontWeight: '900', color: colors.navy }}>Resume Wi-Fi setup</Text>
               <Text style={{ color: colors.mutedStrong, lineHeight: 20 }}>
                 Last device on this phone: <Text style={{ fontWeight: '800', color: colors.navy }}>{lastTarget.deviceName}</Text>.
-                If the scan list is empty, the device may already be paired over BLE—open Wi‑Fi provisioning to enter or fix the network password without scanning again.
               </Text>
               <PrimaryButton
-                label="Continue to Wi‑Fi"
+                label="Continue to Wi-Fi"
                 onPress={() =>
                   router.push({
                     pathname: '/setup/wifi-provisioning',
@@ -306,7 +284,7 @@ export default function ScanDeviceScreen() {
                 }
               />
               <SecondaryButton
-                label="Forget stored device & scan fresh"
+                label="Forget stored device and scan fresh"
                 onPress={() => {
                   void (async () => {
                     await clearLastBleProvisioningTarget();
@@ -321,51 +299,36 @@ export default function ScanDeviceScreen() {
 
         <View style={{ marginTop: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
           {scanning ? <ActivityIndicator color={colors.primary} /> : null}
-          <Text style={{ color: colors.muted, fontWeight: '700' }}>{scanning ? 'Scanning…' : 'Pull to rescan'}</Text>
+          <Text style={{ color: colors.muted, fontWeight: '700' }}>{scanning ? 'Scanning...' : 'Pull to rescan'}</Text>
         </View>
 
         <View style={{ marginTop: spacing.lg, gap: spacing.md }}>
           {items.map((d) => (
-            <Pressable
-              key={d.id}
-              onPress={() => {
-                void (async () => {
-                  await saveLastBleProvisioningTarget(d.name, d.rssi);
-                  setLastTarget({
-                    deviceName: d.name,
-                    rssi: d.rssi,
-                    updatedAt: new Date().toISOString(),
-                  });
-                  router.push({
-                    pathname: '/setup/wifi-provisioning',
-                    params: { name: d.name, rssi: String(d.rssi) },
-                  });
-                })();
-              }}
-            >
+            <Pressable key={d.id} onPress={() => selectDevice(d)}>
               <Card style={{ borderRadius: radius.xl, ...shadows.soft, backgroundColor: colors.card }}>
-                <Card.Content style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <View style={{ flex: 1, paddingRight: spacing.sm }}>
-                    <Text style={{ fontWeight: '900', color: colors.navy }}>{d.name}</Text>
-                    <Text style={{ marginTop: 4, color: colors.muted }}>RSSI {d.rssi} dBm</Text>
+                <Card.Content style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1 }}>
+                    <View style={{ width: 42, height: 42, borderRadius: 14, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' }}>
+                      {mode === 'config' ? <Bluetooth color={colors.primary} size={22} /> : <Radio color={colors.primary} size={22} />}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontWeight: '900', color: colors.navy }}>{d.name}</Text>
+                      <Text style={{ marginTop: 4, color: colors.muted }}>
+                        RSSI {d.rssi} dBm - {d.transport}
+                      </Text>
+                    </View>
                   </View>
-                  <Text style={{ color: colors.primary, fontWeight: '900' }}>Select</Text>
+                  <Text style={{ color: colors.primary, fontWeight: '900' }}>Connect</Text>
                 </Card.Content>
               </Card>
             </Pressable>
           ))}
         </View>
 
-        {!scanning && items.length === 0 && dialog === null && !lastTarget ? (
+        {!scanning && items.length === 0 && dialog === null && (mode === 'config' || !lastTarget) ? (
           <View style={{ marginTop: spacing.xl }}>
             <EmptyState variant="noNearbyDevice" onPrimaryPress={() => void runScan()} />
           </View>
-        ) : null}
-
-        {!scanning && items.length === 0 && dialog === null && lastTarget ? (
-          <Text style={{ marginTop: spacing.lg, color: colors.mutedStrong, lineHeight: 20, paddingHorizontal: spacing.xs }}>
-            No PROV_ devices in range right now. Use “Continue to Wi‑Fi” above for {lastTarget.deviceName}, or pull to rescan after putting the board back in provisioning mode.
-          </Text>
         ) : null}
 
         <View style={{ marginTop: spacing.lg }}>

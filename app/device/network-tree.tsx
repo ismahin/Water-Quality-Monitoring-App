@@ -7,15 +7,14 @@ import { AppScreen } from '../../components/AppScreen';
 import { AppHeader } from '../../components/AppHeader';
 import { NetworkTree } from '../../components/NetworkTree';
 
-/**
- * Pass `deviceId` as the tree root (usually a gateway). Example: `/device/network-tree?deviceId=m1`
- */
 export default function NetworkTreeScreen() {
   const router = useRouter();
-  const { deviceId } = useLocalSearchParams<{ deviceId?: string }>();
-  const { devices } = useMockApp();
-  const rootId = String(deviceId ?? 'm1');
-  const root = getDeviceById(rootId);
+  const { deviceId, gatewayId } = useLocalSearchParams<{ deviceId?: string; gatewayId?: string }>();
+  const { devices, getNetworkTree } = useMockApp();
+  const rootId = String(gatewayId ?? deviceId ?? 'm1');
+  const liveTree = getNetworkTree(rootId);
+  const root = liveTree[0] ?? getDeviceById(rootId);
+  const allDevices = liveTree.length ? liveTree : devices;
 
   if (!root) {
     return (
@@ -28,9 +27,9 @@ export default function NetworkTreeScreen() {
 
   return (
     <AppScreen>
-      <AppHeader title="Network tree" subtitle="Tap a node for details" onBack={() => router.back()} />
+      <AppHeader title="Network tree" subtitle={root.isLive ? 'Live Firebase network' : 'Demo network'} onBack={() => router.back()} />
       <View style={{ marginTop: spacing.sm }}>
-        <NetworkTree root={root} allDevices={devices} />
+        <NetworkTree root={root} allDevices={allDevices} />
       </View>
     </AppScreen>
   );

@@ -2,7 +2,52 @@
 
 **AquaNode** is a React Native (Expo) app for an IoT water quality monitoring system. **Stage 1** adds real **BLE Wi‑Fi provisioning** for a single ESP32-S3 (ESP-IDF provisioning) and **live telemetry** from **Firebase Realtime Database**, while keeping ponds, alerts, thresholds, LoRa flows, and multi-node demos as **mock** data.
 
+Current Universal Firmware v2 support supersedes the older Stage 1-only description above.
+
 Repository: [Water-Quality-Monitoring-App](https://github.com/ismahin/Water-Quality-Monitoring-App) (local path may differ).
+
+## Universal Firmware v2
+
+AquaNode now targets the universal ESP32-S3 firmware. The same firmware runs on Single, Gateway, Relay, and Child hardware roles, while the app reads Firebase and BLE config state to display the active role automatically.
+
+Auto-role logic:
+
+- Toggle `HIGH`: `SINGLE` hardware mode, standalone Wi-Fi + Firebase telemetry.
+- Toggle `LOW`: `NETWORK` hardware mode.
+- In network mode, `gatewayUplinkEnabled=true` plus Wi-Fi makes the device `GATEWAY`.
+- Otherwise `relayEnabled=true` makes it `RELAY`.
+- Otherwise the device is a `CHILD`.
+
+BLE names:
+
+- Wi-Fi provisioning advertises as `PROV_{deviceId}`, uses PoP `12345678`, BLE transport, ESP-IDF Security 1.
+- Device config advertises as `CFG_{deviceId}`.
+- Config service UUID: `7b7d0001-8e8f-4f6a-9c2a-001122334455`.
+
+Firebase paths:
+
+```text
+devices/{deviceId}/latest
+devices/{deviceId}/status
+devices/{gatewayId}/children/{sourceId}/latest
+devices/{gatewayId}/children/{sourceId}/status
+devices/{gatewayId}/network/{sourceId}
+devices/{deviceId}/commands/reset_wifi
+devices/{deviceId}/commands/reset_wifi_ack
+```
+
+App setup steps:
+
+1. Add Single / Gateway Device: scan `PROV_`, provision Wi-Fi, then configure role through `CFG_`.
+2. Add Child / Relay Node: select a parent, scan `CFG_`, write LoRa/network config, then wait for gateway Firebase child data.
+3. Configure Existing Device: scan `CFG_`, read status/config, and update universal role settings.
+
+Real BLE provisioning and BLE config do not work in Expo Go. Use a development build:
+
+```bash
+npx expo prebuild
+npx expo run:android
+```
 
 ## Requirements
 
@@ -24,6 +69,13 @@ npm install
 3. Restart Metro after changing `.env`.
 
 If keys are missing in development, the app throws a clear error when Firebase config is read (see `constants/env.ts`).
+
+Optional mock flags:
+
+```bash
+EXPO_PUBLIC_MOCK_PROVISIONING=false
+EXPO_PUBLIC_MOCK_BLE_CONFIG=false
+```
 
 ## Run with Expo (JS only / Expo Go)
 

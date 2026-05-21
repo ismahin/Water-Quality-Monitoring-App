@@ -4,19 +4,36 @@ import { AlertTriangle, Radio, WifiOff } from 'lucide-react-native';
 import { colors, radius, shadows, spacing } from '../constants/theme';
 
 export type LoRaStatusCardProps = {
-  enabled: boolean;
-  initialized: boolean;
-  gatewayReady: boolean;
+  enabled?: boolean;
+  ready?: boolean;
+  error?: string;
+  initialized?: boolean;
+  gatewayReady?: boolean;
   frequencyMhz?: number;
   packetCount?: number;
   lastRssi?: number;
   lastSnr?: number;
   lastError?: string;
+  childRssi?: number;
+  childSnr?: number;
+  gatewayRssi?: number;
+  gatewaySnr?: number;
   lastPayload?: string;
+  showNoPacketMessage?: boolean;
 };
+
+function metric(label: string, value: string) {
+  return (
+    <Text style={{ color: colors.mutedStrong, fontSize: 12, fontWeight: '700' }}>
+      {label}: {value}
+    </Text>
+  );
+}
 
 export function LoRaStatusCard({
   enabled,
+  ready,
+  error,
   initialized,
   gatewayReady,
   frequencyMhz,
@@ -24,31 +41,41 @@ export function LoRaStatusCard({
   lastRssi,
   lastSnr,
   lastError,
+  childRssi,
+  childSnr,
+  gatewayRssi,
+  gatewaySnr,
   lastPayload,
+  showNoPacketMessage,
 }: LoRaStatusCardProps) {
+  const isEnabled = enabled !== false;
+  const isReady = ready ?? (initialized === true && gatewayReady === true);
+  const effectiveError = error ?? lastError;
+
   let tone: 'neutral' | 'success' | 'danger' = 'neutral';
   let Icon = Radio;
   let title = 'LoRa';
   let subtitle = '';
 
-  if (!enabled) {
+  if (!isEnabled) {
     Icon = WifiOff;
     title = 'LoRa Disabled';
     subtitle = 'Single mode active';
-    tone = 'neutral';
-  } else if (initialized && gatewayReady) {
+  } else if (isReady) {
     Icon = Radio;
-    title = 'LoRa Gateway Ready';
+    title = 'LoRa Ready';
     subtitle =
       typeof frequencyMhz === 'number'
         ? `SX1278 initialized at ${frequencyMhz} MHz`
-        : 'SX1278 initialized — gateway listening';
+        : 'SX1278 initialized and listening';
     tone = 'success';
   } else {
     Icon = AlertTriangle;
     title = 'LoRa Module Error';
     subtitle =
-      lastError && lastError !== 'none' ? lastError : 'Check SX1278 wiring, 3.3V, GND, NSS, RST, DIO0, SPI pins and antenna.';
+      effectiveError && effectiveError !== 'none'
+        ? effectiveError
+        : 'Check SX1278 wiring, power, SPI pins, and antenna.';
     tone = 'danger';
   }
 
@@ -58,8 +85,7 @@ export function LoRaStatusCard({
       : tone === 'danger'
         ? 'rgba(239, 68, 68, 0.4)'
         : colors.border;
-  const bg =
-    tone === 'success' ? '#ECFEFF' : tone === 'danger' ? '#FEF2F2' : colors.surfaceMuted;
+  const bg = tone === 'success' ? '#ECFEFF' : tone === 'danger' ? '#FEF2F2' : colors.surfaceMuted;
   const iconColor = tone === 'success' ? colors.secondary : tone === 'danger' ? colors.danger : colors.mutedStrong;
 
   return (
@@ -72,23 +98,22 @@ export function LoRaStatusCard({
             <Text style={{ marginTop: 4, color: colors.mutedStrong, fontSize: 13, lineHeight: 18 }}>{subtitle}</Text>
           </View>
         </View>
-        {enabled ? (
+        {isEnabled ? (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.xs }}>
-            <Text style={{ color: colors.mutedStrong, fontSize: 12, fontWeight: '700' }}>
-              Frequency: {typeof frequencyMhz === 'number' ? `${frequencyMhz} MHz` : '—'}
-            </Text>
-            <Text style={{ color: colors.mutedStrong, fontSize: 12, fontWeight: '700' }}>
-              Packets: {typeof packetCount === 'number' ? packetCount : '—'}
-            </Text>
-            <Text style={{ color: colors.mutedStrong, fontSize: 12, fontWeight: '700' }}>
-              RSSI: {typeof lastRssi === 'number' ? `${lastRssi} dBm` : '—'}
-            </Text>
-            <Text style={{ color: colors.mutedStrong, fontSize: 12, fontWeight: '700' }}>
-              SNR: {typeof lastSnr === 'number' ? `${lastSnr.toFixed(1)} dB` : '—'}
-            </Text>
+            {metric('Frequency', typeof frequencyMhz === 'number' ? `${frequencyMhz} MHz` : '-')}
+            {metric('Packets', typeof packetCount === 'number' ? String(packetCount) : '-')}
+            {metric('RSSI', typeof lastRssi === 'number' ? `${lastRssi} dBm` : '-')}
+            {metric('SNR', typeof lastSnr === 'number' ? `${lastSnr.toFixed(1)} dB` : '-')}
+            {metric('Child RSSI', typeof childRssi === 'number' ? `${childRssi} dBm` : '-')}
+            {metric('Child SNR', typeof childSnr === 'number' ? `${childSnr.toFixed(1)} dB` : '-')}
+            {metric('Gateway RSSI', typeof gatewayRssi === 'number' ? `${gatewayRssi} dBm` : '-')}
+            {metric('Gateway SNR', typeof gatewaySnr === 'number' ? `${gatewaySnr.toFixed(1)} dB` : '-')}
           </View>
         ) : null}
-        {lastPayload && enabled && gatewayReady ? (
+        {showNoPacketMessage && isReady && (!packetCount || packetCount <= 0) ? (
+          <Text style={{ color: colors.mutedStrong, fontSize: 12, fontWeight: '700' }}>No LoRa packet received yet.</Text>
+        ) : null}
+        {lastPayload && isEnabled && isReady ? (
           <Text style={{ color: colors.mutedStrong, fontSize: 11, fontFamily: 'monospace' }} numberOfLines={2}>
             Last payload: {lastPayload}
           </Text>

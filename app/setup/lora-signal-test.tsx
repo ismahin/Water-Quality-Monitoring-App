@@ -1,83 +1,82 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import { Text, View } from 'react-native';
 import { Card } from 'react-native-paper';
-import { NotificationSnackbar } from '../../components/NotificationSnackbar';
-import { mockSignalHistory } from '../../constants/mockData';
 import { colors, radius, shadows, spacing } from '../../constants/theme';
+import { useMockApp } from '../../context/MockAppContext';
+import { formatRelativeTime } from '../../utils/formatTime';
 import { loraQualityFromMetrics } from '../../utils/statusUtils';
 import { AppScreen } from '../../components/AppScreen';
 import { AppHeader } from '../../components/AppHeader';
-import { PrimaryButton } from '../../components/PrimaryButton';
+import { LoRaStatusCard } from '../../components/LoRaStatusCard';
 import { SecondaryButton } from '../../components/SecondaryButton';
-import { SensorChart } from '../../components/SensorChart';
 import { SignalStrengthBar } from '../../components/SignalStrengthBar';
 
 export default function LoraSignalTestScreen() {
   const router = useRouter();
-  const { deviceId } = useLocalSearchParams<{ deviceId?: string }>();
-  const id = String(deviceId ?? 'c2');
-  const [live, setLive] = useState(false);
-  const [rssi, setRssi] = useState(-89);
-  const [snr, setSnr] = useState(7.8);
-  const [pkt, setPkt] = useState(96);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [snack, setSnack] = useState(false);
+  const { deviceId, gatewayId } = useLocalSearchParams<{ deviceId?: string; gatewayId?: string }>();
+  const { getGatewayChildren, devices } = useMockApp();
+  const id = String(deviceId ?? '');
+  const gateway = String(gatewayId ?? devices.find((d) => d.role === 'gateway' && d.isLive)?.id ?? 'M1');
+  const liveNodes = getGatewayChildren(gateway);
+  const node = useMemo(() => {
+    if (id) return liveNodes.find((d) => d.id === id || d.sourceId === id) ?? devices.find((d) => d.id === id);
+    return liveNodes[0];
+  }, [devices, id, liveNodes]);
 
-  const quality = useMemo(() => loraQualityFromMetrics({ rssi, snr, packetSuccess: pkt }), [pkt, rssi, snr]);
-
-  useEffect(() => {
-    if (!live) return undefined;
-    timer.current = setInterval(() => {
-      setRssi((v) => Math.min(-70, Math.max(-110, v + (Math.random() - 0.5) * 4)));
-      setSnr((v) => Math.min(12, Math.max(1, v + (Math.random() - 0.5) * 0.8)));
-      setPkt((v) => Math.min(99, Math.max(80, v + (Math.random() - 0.5) * 2)));
-    }, 700);
-    return () => {
-      if (timer.current) clearInterval(timer.current);
-    };
-  }, [live]);
+  const rssi = node?.childRssi ?? node?.gatewayRssi ?? ('loraRssi' in (node ?? {}) ? (node as { loraRssi?: number }).loraRssi : undefined);
+  const snr = node?.childSnr ?? node?.gatewaySnr ?? ('loraSnr' in (node ?? {}) ? (node as { loraSnr?: number }).loraSnr : undefined);
+  const packetSuccess = 'packetSuccessPercent' in (node ?? {}) ? (node as { packetSuccessPercent?: number }).packetSuccessPercent ?? 0 : 0;
+  const quality =
+    typeof rssi === 'number' && typeof snr === 'number'
+      ? loraQualityFromMetrics({ rssi, snr, packetSuccess: packetSuccess || 100 })
+      : 'No packets';
 
   return (
     <AppScreen>
-      <AppHeader title="LoRa signal test" subtitle={`Installation mode · ${id.toUpperCase()}`} onBack={() => router.back()} />
+      <AppHeader title="LoRa signal test" subtitle={node ? node.id : `Gateway ${gateway}`} onBack={() => router.back()} />
 
-      <Card style={{ borderRadius: radius.xxl, ...shadows.card, backgroundColor: colors.card }}>
-        <Card.Content style={{ gap: spacing.md }}>
-          <Text style={{ fontWeight: '900', color: colors.navy }}>Live metrics (mock)</Text>
-          <Text style={{ color: colors.muted }}>RSSI: {rssi.toFixed(0)} dBm</Text>
-          <Text style={{ color: colors.muted }}>SNR: {snr.toFixed(1)} dB</Text>
-          <Text style={{ color: colors.muted }}>Packet success: {pkt.toFixed(0)}%</Text>
-          <Text style={{ color: colors.primary, fontWeight: '900' }}>Recommended: {quality}</Text>
+      {node ? (
+        <>
+          <LoRaStatusCard
+            enabled
+            ready={node.loraStatus !== 'error'}
+            childRssi={node.childRssi}
+            childSnr={node.childSnr}
+            gatewayRssi={node.gatewayRssi}
+            gatewaySnr={node.gatewaySnr}
+            lastRssi={rssi}
+            lastSnr={snr}
+            packetCount={node.isLive ? 1 : 0}
+            error={node.loraLastError}
+            showNoPacketMessage={!node.isLive}
+          />
 
-          <View style={{ marginTop: spacing.md }}>
-            <SignalStrengthBar type="lora" rssi={rssi} snr={snr} packetSuccess={pkt} />
-          </View>
-        </Card.Content>
-      </Card>
+          <Card style={{ marginTop: spacing.md, borderRadius: radius.xl, ...shadows.soft, backgroundColor: colors.card }}>
+            <Card.Content style={{ gap: spacing.sm }}>
+              <Text style={{ fontWeight: '900', color: colors.navy }}>Live signal</Text>
+              <Text style={{ color: colors.mutedStrong }}>Recommended: {quality}</Text>
+              <Text style={{ color: colors.mutedStrong }}>Last seen: {formatRelativeTime(node.lastDataAt)}</Text>
+              {typeof rssi === 'number' && typeof snr === 'number' ? (
+                <SignalStrengthBar type="lora" rssi={rssi} snr={snr} packetSuccess={packetSuccess || 100} />
+              ) : null}
+            </Card.Content>
+          </Card>
+        </>
+      ) : (
+        <Card style={{ borderRadius: radius.xl, ...shadows.soft, backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: 'rgba(245,158,11,0.35)' }}>
+          <Card.Content>
+            <Text style={{ color: colors.navy, fontWeight: '900' }}>No LoRa packet received yet.</Text>
+            <Text style={{ marginTop: 6, color: colors.mutedStrong, lineHeight: 20 }}>
+              Waiting for a child packet under devices/{gateway}/children.
+            </Text>
+          </Card.Content>
+        </Card>
+      )}
 
-      <Card style={{ marginTop: spacing.md, borderRadius: radius.xl, ...shadows.soft, backgroundColor: colors.card }}>
-        <Card.Content style={{ gap: spacing.sm }}>
-          <Text style={{ fontWeight: '900', color: colors.navy }}>Guidance</Text>
-          <Text style={{ color: colors.muted, lineHeight: 20 }}>• Move higher for better antenna clearance</Text>
-          <Text style={{ color: colors.muted, lineHeight: 20 }}>• Avoid metal enclosure near antenna</Text>
-          <Text style={{ color: colors.muted, lineHeight: 20 }}>
-            • Current position is good for stable data transfer
-          </Text>
-        </Card.Content>
-      </Card>
-
-      <Text style={{ marginTop: spacing.lg, fontWeight: '900', color: colors.navy }}>Signal history</Text>
-      <SensorChart data={mockSignalHistory()} height={150} ySuffix=" dBm" />
-
-      <PrimaryButton
-        label={live ? 'Stop live test' : 'Start live test'}
-        onPress={() => setLive((v) => !v)}
-        style={{ marginTop: spacing.md }}
-      />
-      <SecondaryButton label="Save position" style={{ marginTop: spacing.sm }} onPress={() => setSnack(true)} />
-
-      <NotificationSnackbar visible={snack} onDismiss={() => setSnack(false)} duration={2000} message="Saved install position (mock)" />
+      <View style={{ marginTop: spacing.lg }}>
+        <SecondaryButton label="Back to devices" onPress={() => router.replace('/(tabs)/devices')} />
+      </View>
     </AppScreen>
   );
 }

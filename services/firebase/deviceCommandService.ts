@@ -100,7 +100,7 @@ export function waitForResetWifiAck(
  */
 export async function removeDeviceWithWifiReset(
   deviceId: string,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<RemoveDeviceResult> {
   try {
     const { commandId } = await sendResetWifiCommand(deviceId);
@@ -108,7 +108,7 @@ export async function removeDeviceWithWifiReset(
       return { ok: false, acked: false, commandId, reason: 'aborted' };
     }
 
-    const waitResult = await waitForResetWifiAck(deviceId, commandId, 10000, options?.signal);
+    const waitResult = await waitForResetWifiAck(deviceId, commandId, options?.timeoutMs ?? 10000, options?.signal);
 
     if (waitResult === 'aborted') {
       return { ok: false, acked: false, commandId, reason: 'aborted' };

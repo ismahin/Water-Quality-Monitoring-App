@@ -1,4 +1,5 @@
 import type { SensorSnapshot } from './sensor';
+import type { HardwareMode, LoRaStatus, UniversalRole } from './universalDevice';
 
 export type DeviceRole = 'single' | 'gateway' | 'relay' | 'child';
 
@@ -9,7 +10,19 @@ export type CalibrationStatus = 'ok' | 'due' | 'overdue';
 /** Optional fields populated from Firebase for live gateway / single devices */
 export interface LiveFirebaseDeviceFields {
   firebaseRole?: string;
-  hardwareMode?: string;
+  universalRole?: UniversalRole;
+  hardwareMode?: HardwareMode | string;
+  networkId?: string;
+  parentId?: string;
+  rootGatewayId?: string;
+  gatewayUplinkEnabled?: boolean;
+  relayEnabled?: boolean;
+  route?: string;
+  forwardedBy?: string;
+  isLive?: boolean;
+  isDemo?: boolean;
+  sourceId?: string;
+  gatewayId?: string;
   ip?: string;
   wifiConnected?: boolean;
   sensorMode?: string;
@@ -18,6 +31,8 @@ export interface LiveFirebaseDeviceFields {
   reprovisionRequired?: boolean;
   firebaseMessage?: string;
   loraEnabled?: boolean;
+  loraStatus?: LoRaStatus;
+  loraReady?: boolean;
   loraInitialized?: boolean;
   loraGatewayReady?: boolean;
   loraFrequencyMhz?: number;
@@ -25,7 +40,13 @@ export interface LiveFirebaseDeviceFields {
   loraPacketCount?: number;
   lastLoraRssi?: number;
   lastLoraSnr?: number;
+  childRssi?: number;
+  childSnr?: number;
+  gatewayRssi?: number;
+  gatewaySnr?: number;
   lastLoraPayload?: string;
+  forwardQueue?: number;
+  bleConfigConnected?: boolean;
   /** True when Firebase says online but app has not received an update within the stale window */
   telemetryStale?: boolean;
   /** Raw firmware string from `latest.sensor_status` (e.g. MOCK) */
@@ -48,6 +69,18 @@ export interface BaseDevice {
   calibrationDueAt?: string;
   firmwareVersion: string;
   availableFirmwareVersion?: string;
+  universalRole?: UniversalRole;
+  hardwareMode?: HardwareMode | string;
+  networkId?: string;
+  rootGatewayId?: string;
+  gatewayUplinkEnabled?: boolean;
+  relayEnabled?: boolean;
+  route?: string;
+  forwardedBy?: string;
+  sourceId?: string;
+  gatewayId?: string;
+  isLive?: boolean;
+  isDemo?: boolean;
 }
 
 export interface GatewayDevice extends BaseDevice, LiveFirebaseDeviceFields {
@@ -66,7 +99,7 @@ export interface SingleDevice extends BaseDevice, LiveFirebaseDeviceFields {
   cloudOnline: boolean;
 }
 
-export interface RelayDevice extends BaseDevice {
+export interface RelayDevice extends BaseDevice, LiveFirebaseDeviceFields {
   role: 'relay';
   parentId: string;
   loraRssi: number;
@@ -75,7 +108,7 @@ export interface RelayDevice extends BaseDevice {
   childDeviceIds: string[];
 }
 
-export interface ChildDevice extends BaseDevice {
+export interface ChildDevice extends BaseDevice, LiveFirebaseDeviceFields {
   role: 'child';
   parentId: string;
   loraRssi: number;

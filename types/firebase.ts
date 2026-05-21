@@ -8,6 +8,8 @@ export interface FirebaseLatestReading {
   device_id?: string;
   role?: FirebaseDeviceRole;
   hardware_mode?: FirebaseDeviceRole;
+  gateway_uplink_enabled?: boolean;
+  relay_enabled?: boolean;
   ph?: number;
   tds?: number;
   temperature?: number;
@@ -17,6 +19,8 @@ export interface FirebaseLatestReading {
   wifi_ssid?: string;
   wifi_rssi?: number;
   ip?: string;
+  lora_ready?: boolean;
+  lora_error?: string;
   lora_enabled?: boolean;
   lora_initialized?: boolean;
   lora_gateway_ready?: boolean;
@@ -25,6 +29,9 @@ export interface FirebaseLatestReading {
   lora_packet_count?: number;
   last_lora_rssi?: number;
   last_lora_snr?: number;
+  parent_id?: string;
+  root_gateway_id?: string;
+  network_id?: string;
   uptime_ms?: number;
   sensor_status?: string;
   calibration_status?: string;
@@ -34,11 +41,15 @@ export interface FirebaseDeviceStatus {
   device_id?: string;
   role?: FirebaseDeviceRole;
   hardware_mode?: FirebaseDeviceRole;
+  gateway_uplink_enabled?: boolean;
+  relay_enabled?: boolean;
   online?: boolean;
   wifi_connected?: boolean;
   wifi_ssid?: string;
   wifi_rssi?: number;
   ip?: string;
+  lora_ready?: boolean;
+  lora_error?: string;
   lora_enabled?: boolean;
   lora_initialized?: boolean;
   lora_gateway_ready?: boolean;
@@ -48,6 +59,11 @@ export interface FirebaseDeviceStatus {
   last_lora_rssi?: number;
   last_lora_snr?: number;
   last_lora_payload?: string;
+  parent_id?: string;
+  root_gateway_id?: string;
+  network_id?: string;
+  forward_queue?: number;
+  ble_config_connected?: boolean;
   sensor_mode?: string;
   command_stream?: 'connected' | 'disconnected' | string;
   last_upload_ms?: number;
@@ -63,6 +79,87 @@ export interface FirebaseDeviceSnapshot {
   latest: FirebaseLatestReading | null;
   status: FirebaseDeviceStatus | null;
   /** Local ISO timestamp when either latest or status snapshot was received */
+  receivedAt: string;
+}
+
+export interface FirebaseChildLatest {
+  source_id?: string;
+  role?: FirebaseDeviceRole;
+  forwarded_by?: string;
+  route?: string;
+  gateway_id?: string;
+  parent_id?: string;
+  root_gateway_id?: string;
+  network_id?: string;
+  ph?: number;
+  tds?: number;
+  temperature?: number;
+  turbidity?: number;
+  battery?: number;
+  battery_voltage?: number;
+  seq?: number;
+  sid?: number;
+  child_rssi?: number;
+  child_snr?: number;
+  gateway_rssi?: number;
+  gateway_snr?: number;
+  last_upload_ms?: number;
+  uptime_ms?: number;
+  relay_enabled?: boolean;
+  gateway_uplink_enabled?: boolean;
+}
+
+export interface FirebaseChildStatus {
+  source_id?: string;
+  device_id?: string;
+  role?: FirebaseDeviceRole;
+  online?: boolean;
+  forwarded_by?: string;
+  route?: string;
+  gateway_id?: string;
+  parent_id?: string;
+  root_gateway_id?: string;
+  network_id?: string;
+  lora_ready?: boolean;
+  lora_error?: string;
+  child_rssi?: number;
+  child_snr?: number;
+  gateway_rssi?: number;
+  gateway_snr?: number;
+  last_upload_ms?: number;
+  uptime_ms?: number;
+  relay_enabled?: boolean;
+  gateway_uplink_enabled?: boolean;
+}
+
+export interface FirebaseNetworkNode {
+  device_id?: string;
+  source_id?: string;
+  role?: FirebaseDeviceRole;
+  parent_id?: string;
+  root_gateway_id?: string;
+  network_id?: string;
+  forwarded_by?: string;
+  route?: string;
+  online?: boolean;
+  relay_enabled?: boolean;
+  gateway_uplink_enabled?: boolean;
+  lora_ready?: boolean;
+  lora_error?: string;
+  last_seen_ms?: number;
+  last_upload_ms?: number;
+  child_rssi?: number;
+  child_snr?: number;
+  gateway_rssi?: number;
+  gateway_snr?: number;
+  battery?: number;
+  [key: string]: unknown;
+}
+
+export interface FirebaseChildSnapshot {
+  latest: FirebaseChildLatest | null;
+  status: FirebaseChildStatus | null;
+  network?: FirebaseNetworkNode | null;
   receivedAt: string;
 }
 

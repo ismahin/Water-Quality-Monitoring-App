@@ -129,8 +129,7 @@ function provisioningFailureCopy(
     case 'wrongPassword':
       return {
         title: 'Wrong Wi-Fi password',
-        message:
-          'The network password was not accepted. Check the password for this Wi‑Fi, then tap Try again to reconnect.',
+        message: 'Wrong Wi-Fi password. Please check and try again.',
       };
     case 'apNotFound':
       return {
@@ -248,7 +247,7 @@ export default function WifiProvisioningScreen() {
     handledSuccess.current = true;
     void (async () => {
       try {
-        await addRegisteredDevice(lastSuccess.deviceId, { bleProvisionName: deviceName });
+        await addRegisteredDevice(lastSuccess.deviceId, { bleProvisionName: deviceName, roleHint: 'SINGLE' });
         await clearLastBleProvisioningTarget();
       } finally {
         setPassword('');
