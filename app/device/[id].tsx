@@ -7,6 +7,7 @@ import { CloudOff, CloudCheck } from 'lucide-react-native';
 import { NotificationSnackbar } from '../../components/NotificationSnackbar';
 import { LoRaStatusCard } from '../../components/LoRaStatusCard';
 import { AutoRoleCard } from '../../components/AutoRoleCard';
+import { NetworkTree } from '../../components/NetworkTree';
 import { colors, modalSurfaceFit, radius, shadows, spacing } from '../../constants/theme';
 import { getParentName } from '../../constants/mockData';
 import { usesLoraUi, usesWifiUi, isGatewayOrSingle, type GatewayDevice, type SingleDevice } from '../../types/device';
@@ -14,7 +15,6 @@ import { formatRelativeTime } from '../../utils/formatTime';
 import { useMockApp } from '../../context/MockAppContext';
 import { useLiveDevice } from '../../hooks/useLiveDevice';
 import { removeDeviceWithWifiReset } from '../../services/firebase/deviceCommandService';
-import { resolveBleProvisionAdvertName } from '../../services/provisioning/espProvisioningService';
 import { isFirebaseConfigured } from '../../constants/env';
 import { PENDING_AFTER_DEVICE_REMOVE_SNACKBAR } from '../../constants/appStorageKeys';
 import { AppScreen } from '../../components/AppScreen';
@@ -35,7 +35,6 @@ export default function DeviceDetailScreen() {
     removeRegisteredDevice,
     firebaseRtdbConnected,
     getLiveSnapshot,
-    registeredDevices,
   } = useMockApp();
   const deviceId = String(id);
   const device = devices.find((d) => d.id === deviceId);
@@ -129,16 +128,9 @@ export default function DeviceDetailScreen() {
     }
   }, [deviceId, removeRegisteredDevice, router]);
 
-  const registeredForDevice = registeredDevices.find((r) => r.deviceId === deviceId);
-  const bleAdvertNameForProvision = resolveBleProvisionAdvertName(deviceId, registeredForDevice?.bleProvisionName);
-  const reprovisionWifiRssi = Math.round(Number(snap?.latest?.wifi_rssi ?? snap?.status?.wifi_rssi ?? -70));
-
   const goToReprovisionWifi = useCallback(() => {
-    router.push({
-      pathname: '/setup/wifi-provisioning',
-      params: { name: bleAdvertNameForProvision, rssi: String(reprovisionWifiRssi) },
-    });
-  }, [router, bleAdvertNameForProvision, reprovisionWifiRssi]);
+    router.push('/setup/gateway-wifi-setup');
+  }, [router]);
 
   if (!device) {
     return (
@@ -150,6 +142,11 @@ export default function DeviceDetailScreen() {
   }
 
   const parentName = 'parentId' in device ? getParentName(device) ?? device.parentId : undefined;
+  const topologyRootId = device.rootGatewayId || device.gatewayId || device.id;
+  const topologyRoot = devices.find((d) => d.id === topologyRootId) ?? device;
+  const topologyDevices = devices.filter(
+    (d) => d.id === topologyRoot.id || d.rootGatewayId === topologyRoot.id || d.gatewayId === topologyRoot.id || d.parentId === topologyRoot.id,
+  );
   const showCloudStrip =
     usesWifiUi(device) &&
     (device.role === 'gateway'
@@ -485,6 +482,24 @@ export default function DeviceDetailScreen() {
         </Card>
       ) : null}
 
+      {isLive ? (
+        <Card
+          style={{
+            marginTop: spacing.md,
+            borderRadius: radius.xl,
+            ...shadows.soft,
+            backgroundColor: colors.card,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        >
+          <Card.Content style={{ gap: spacing.sm }}>
+            <Text style={{ fontWeight: '900', color: colors.navy, fontSize: 16 }}>Network topology</Text>
+            <NetworkTree root={topologyRoot} allDevices={topologyDevices.length ? topologyDevices : [topologyRoot]} />
+          </Card.Content>
+        </Card>
+      ) : null}
+
       {usesLoraUi(device) ? (
         <Card
           style={{
@@ -588,8 +603,6 @@ export default function DeviceDetailScreen() {
 
       {device.role === 'gateway' && !isLive ? (
         <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
-          <PrimaryButton label="View Network Tree" onPress={() => router.push({ pathname: '/device/network-tree', params: { deviceId: device.id } })} />
-          <SecondaryButton label="Add Child Node" onPress={() => router.push('/setup/add-child-node')} />
           <SecondaryButton label="Run Diagnostics" onPress={() => router.push({ pathname: '/device/diagnostics', params: { deviceId: device.id } })} />
           <SecondaryButton label="Sensor Calibration" onPress={() => router.push('/setup/calibration-start')} />
           <SecondaryButton label="Firmware Update" onPress={() => router.push({ pathname: '/device/firmware-update', params: { deviceId: device.id } })} />
@@ -599,7 +612,6 @@ export default function DeviceDetailScreen() {
 
       {device.role === 'relay' && !isLive ? (
         <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
-          <PrimaryButton label="Add Child Under This Relay" onPress={() => router.push('/setup/add-child-node')} />
           <SecondaryButton label="LoRa Signal Test" onPress={() => router.push({ pathname: '/setup/lora-signal-test', params: { deviceId: device.id } })} />
           <SecondaryButton label="Calibration" onPress={() => router.push('/setup/calibration-start')} />
           <SecondaryButton label="Diagnostics" onPress={() => router.push({ pathname: '/device/diagnostics', params: { deviceId: device.id } })} />
@@ -628,11 +640,10 @@ export default function DeviceDetailScreen() {
           <PrimaryButton label="Refresh" onPress={() => void live.refresh()} />
           <SecondaryButton
             label="Configure Device"
-            onPress={() => router.push({ pathname: '/setup/config-device', params: { deviceName: `CFG_${device.id}`, deviceId: device.id } })}
+            onPress={() => router.push('/setup/pairing-config')}
           />
           <SecondaryButton label="Re-provision Wi‑Fi" onPress={goToReprovisionWifi} />
           <SecondaryButton label="View Firebase paths" onPress={() => setFirebasePathsVisible(true)} />
-          <SecondaryButton label="View Network Tree" onPress={() => router.push({ pathname: '/device/network-tree', params: { deviceId: device.rootGatewayId || device.id } })} />
           <SecondaryButton label="View Signal Test" onPress={() => router.push({ pathname: '/setup/lora-signal-test', params: { gatewayId: device.rootGatewayId || device.id, deviceId: device.id } })} />
           <SecondaryButton label="Diagnostics" onPress={() => router.push({ pathname: '/device/diagnostics', params: { deviceId: device.id } })} />
           <SecondaryButton label="Sensor calibration" onPress={() => router.push('/setup/calibration-start')} />
@@ -645,21 +656,8 @@ export default function DeviceDetailScreen() {
         <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
           <PrimaryButton
             label="Configure Device"
-            onPress={() =>
-              router.push({
-                pathname: '/setup/config-device',
-                params: {
-                  deviceName: `CFG_${device.id}`,
-                  deviceId: device.id,
-                  targetRole: device.role,
-                  parentId: device.parentId,
-                  rootGatewayId: device.rootGatewayId || device.gatewayId,
-                  networkId: device.networkId,
-                },
-              })
-            }
+            onPress={() => router.push('/setup/pairing-config')}
           />
-          <SecondaryButton label="View Network Tree" onPress={() => router.push({ pathname: '/device/network-tree', params: { deviceId: device.rootGatewayId || device.gatewayId || device.id } })} />
           <SecondaryButton label="View Signal Test" onPress={() => router.push({ pathname: '/setup/lora-signal-test', params: { gatewayId: device.rootGatewayId || device.gatewayId, deviceId: device.id } })} />
           <DestructiveButton label="Remove device" onPress={openRemoveConfirm} />
         </View>

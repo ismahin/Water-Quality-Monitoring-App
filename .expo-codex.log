@@ -1,0 +1,76 @@
+env: load .env
+env: export EXPO_PUBLIC_FIREBASE_API_KEY EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN EXPO_PUBLIC_FIREBASE_DATABASE_URL EXPO_PUBLIC_FIREBASE_PROJECT_ID EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID EXPO_PUBLIC_FIREBASE_APP_ID
+Starting project at D:\Projects\Water-Quality-Monitoring-App
+Starting Metro Bundler
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Waiting on http://localhost:8081
+Logs for your project will appear below.
+Android node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+| expo-router/babel is deprecated in favor of babel-preset-expo in SDK 50. To fix the issue, remove "expo-router/babel" from "plugins" in your babel.config.js file.
+| expo-router/babel is deprecated in favor of babel-preset-expo in SDK 50. To fix the issue, remove "expo-router/babel" from "plugins" in your babel.config.js file.
+| expo-router/babel is deprecated in favor of babel-preset-expo in SDK 50. To fix the issue, remove "expo-router/babel" from "plugins" in your babel.config.js file.
+| expo-router/babel is deprecated in favor of babel-preset-expo in SDK 50. To fix the issue, remove "expo-router/babel" from "plugins" in your babel.config.js file.
+| expo-router/babel is deprecated in favor of babel-preset-expo in SDK 50. To fix the issue, remove "expo-router/babel" from "plugins" in your babel.config.js file.
+| expo-router/babel is deprecated in favor of babel-preset-expo in SDK 50. To fix the issue, remove "expo-router/babel" from "plugins" in your babel.config.js file.
+| expo-router/babel is deprecated in favor of babel-preset-expo in SDK 50. To fix the issue, remove "expo-router/babel" from "plugins" in your babel.config.js file.
+| expo-router/babel is deprecated in favor of babel-preset-expo in SDK 50. To fix the issue, remove "expo-router/babel" from "plugins" in your babel.config.js file.
+| expo-router/babel is deprecated in favor of babel-preset-expo in SDK 50. To fix the issue, remove "expo-router/babel" from "plugins" in your babel.config.js file.
+| expo-router/babel is deprecated in favor of babel-preset-expo in SDK 50. To fix the issue, remove "expo-router/babel" from "plugins" in your babel.config.js file.
+Android node_modules\expo-router\entry.js ▓░░░░░░░░░░░░░░░ 11.1% ( 78/246)
+Android node_modules\expo-router\entry.js ▓▓▓▓▓▓▓▓▓░░░░░░░ 61.2% (645/828)
+Android node_modules\expo-router\entry.js ▓▓▓▓▓▓▓▓▓▓▓▓░░░░ 76.5% (1119/2985)
+Android node_modules\expo-router\entry.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 96.5% (3019/3073)
+Android Bundled 16715ms node_modules\expo-router\entry.js (3328 modules)
+Android node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Android Bundled 349ms node_modules\expo-router\entry.js (1 module)
+Android node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Android Bundled 336ms node_modules\expo-router\entry.js (1 module)
+ WARN  The app is running using the Legacy Architecture. The Legacy Architecture is deprecated and will be removed in a future version of React Native. Please consider migrating to the New Architecture. For more information, please see https://reactnative.dev/blog/2024/10/23/the-new-architecture-is-here
+ LOG  [AquaNode][BLE_SCAN] Starting scan prefix=WQMPAIR_ service=any allowDuplicates=true
+ LOG  [AquaNode][BLE_SCAN] Seen name="TY" id=D8:D6:68:A9:6B:E8 rssi=-96 services=0000a201-0000-1000-8000-00805f9b34fb
+ LOG  [AquaNode][BLE_SCAN] Starting scan prefixes=WQMPAIR_|WQM_ service=any allowDuplicates=true
+ LOG  [AquaNode][BLE_SCAN] Seen name="LAPTOP-BV6K2VQE" id=75:88:EF:7D:BD:83 rssi=-100 services=none
+ LOG  [AquaNode][BLE_SCAN] Seen name="TY" id=D8:D6:68:A9:6B:E8 rssi=-92 services=0000a201-0000-1000-8000-00805f9b34fb
+ LOG  [AquaNode][BLE_SCAN] Seen name="oraimo SpaceBuds Neo BLE" id=08:E4:DF:5D:D5:EC rssi=-89 services=none
+ LOG  [AquaNode][BLE_SCAN] Starting scan prefixes=WQMPAIR_|WQM_ service=any allowDuplicates=true
+ LOG  [AquaNode][BLE_SCAN] Seen name="TY" id=D8:D6:68:A9:6B:E8 rssi=-98 services=0000a201-0000-1000-8000-00805f9b34fb
+ LOG  [AquaNode][BLE_SCAN] Starting scan prefixes=WQMPAIR_|WQM_ service=any allowDuplicates=true
+ LOG  [AquaNode][BLE_SCAN] Starting scan prefixes=WQMPAIR_|WQM_ service=any allowDuplicates=true
+ LOG  [AquaNode][BLE_SCAN] Seen name="TY" id=D8:D6:68:A9:6B:E8 rssi=-91 services=0000a201-0000-1000-8000-00805f9b34fb
+Android node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Android Bundled 405ms node_modules\expo-router\entry.js (1 module)
+ WARN  The app is running using the Legacy Architecture. The Legacy Architecture is deprecated and will be removed in a future version of React Native. Please consider migrating to the New Architecture. For more information, please see https://reactnative.dev/blog/2024/10/23/the-new-architecture-is-here
+ LOG  [AquaNode][BLE_SCAN] Starting scan prefixes=WQMPAIR_|WQM service=any allowDuplicates=true
+ LOG  [AquaNode][BLE_SCAN] Seen name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-40 services=none
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-40
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-40
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-40
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-48
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-48
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-44
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-44
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-49
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-49
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-44
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-44
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-41
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-42
+ LOG  [AquaNode][BLE_SCAN] Seen name="TY" id=D8:D6:68:A9:6B:E8 rssi=-93 services=0000a201-0000-1000-8000-00805f9b34fb
+ LOG  [AquaNode][BLE_SCAN] Starting scan prefixes=WQMPAIR_|WQM service=any allowDuplicates=true
+ LOG  [AquaNode][BLE_SCAN] Seen name="DIZO Wireless Power" id=7E:19:A4:24:1D:41 rssi=-86 services=none
+ LOG  [AquaNode][BLE_SCAN] Starting scan prefixes=WQMPAIR_|WQM service=any allowDuplicates=true
+ LOG  [AquaNode][BLE_SCAN] Seen name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-54 services=none
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-54
+ LOG  [AquaNode][BLE_SCAN] Seen name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-49 services=none
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-49
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-60
+ LOG  [AquaNode][BLE_SCAN] Seen name="TY" id=D8:D6:68:A9:6B:E8 rssi=-96 services=0000a201-0000-1000-8000-00805f9b34fb
+ LOG  [AquaNode][BLE_SCAN] Seen name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-47 services=none
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-47
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-48
+ LOG  [AquaNode][BLE_SCAN] Seen name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-46 services=none
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-46
+ LOG  [AquaNode][BLE_SCAN] Seen name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-43 services=none
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-43
+ LOG  [AquaNode][BLE_SCAN] Seen name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-42 services=none
+ LOG  [AquaNode][BLE_SCAN] Matched AquaNode device name="WQMPAIR_WQM_4EB580" id=80:B5:4E:C7:A2:61 rssi=-42

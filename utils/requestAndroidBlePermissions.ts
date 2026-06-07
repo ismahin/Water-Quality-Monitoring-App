@@ -1,6 +1,8 @@
 import { PermissionsAndroid, Platform } from 'react-native';
 
 const LOG_PREFIX = '[AquaNode][BLE]';
+let bleRuntimeGranted = false;
+let fineLocationGranted = false;
 
 function androidApiLevel(): number {
   if (Platform.OS !== 'android') return 0;
@@ -21,11 +23,25 @@ export async function requestAndroidBleRuntimePermissions(): Promise<
 
   const api = androidApiLevel();
   if (api < 31) {
-    console.log(`${LOG_PREFIX} API ${api}: BLUETOOTH_SCAN/CONNECT runtime prompts not required (pre-Android 12).`);
+    if (!bleRuntimeGranted) {
+      console.log(`${LOG_PREFIX} API ${api}: BLUETOOTH_SCAN/CONNECT runtime prompts not required (pre-Android 12).`);
+      bleRuntimeGranted = true;
+    }
     return { ok: true };
   }
 
   try {
+    if (bleRuntimeGranted) return { ok: true };
+
+    const [hasScan, hasConnect] = await Promise.all([
+      PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN),
+      PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT),
+    ]);
+    if (hasScan && hasConnect) {
+      bleRuntimeGranted = true;
+      return { ok: true };
+    }
+
     console.log(`${LOG_PREFIX} Requesting BLUETOOTH_SCAN + BLUETOOTH_CONNECT (API ${api})`);
     const results = await PermissionsAndroid.requestMultiple([
       PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
@@ -42,6 +58,7 @@ export async function requestAndroidBleRuntimePermissions(): Promise<
       console.error(`${LOG_PREFIX}`, msg);
       return { ok: false, message: msg };
     }
+    bleRuntimeGranted = true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`${LOG_PREFIX} requestMultiple threw:`, e);
@@ -66,6 +83,14 @@ export async function requestAndroidFineLocationRuntimePermission(): Promise<
   }
 
   try {
+    if (fineLocationGranted) return { ok: true };
+
+    const hasFineLocation = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+    if (hasFineLocation) {
+      fineLocationGranted = true;
+      return { ok: true };
+    }
+
     const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
     console.log(`${LOG_PREFIX} ACCESS_FINE_LOCATION result:`, r);
     if (r !== PermissionsAndroid.RESULTS.GRANTED) {
@@ -74,6 +99,7 @@ export async function requestAndroidFineLocationRuntimePermission(): Promise<
       console.error(`${LOG_PREFIX}`, msg);
       return { ok: false, message: msg };
     }
+    fineLocationGranted = true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`${LOG_PREFIX} ACCESS_FINE_LOCATION request threw:`, e);

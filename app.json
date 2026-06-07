@@ -7,7 +7,7 @@
     "scheme": "aquanode",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -49,14 +49,6 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to use location for Bluetooth scanning during AquaNode device setup.",
           "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use location for Bluetooth scanning during AquaNode device setup."
-        }
-      ],
-      [
-        "@orbital-systems/react-native-esp-idf-provisioning",
-        {
-          "transport": "ble",
-          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to discover and provision nearby AquaNode ESP32 devices over Bluetooth.",
-          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use location for Bluetooth scanning and Wi-Fi provisioning where required by the OS."
         }
       ],
       "react-native-ble-plx"

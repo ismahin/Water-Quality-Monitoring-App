@@ -9,21 +9,21 @@ import { AppHeader } from '../../components/AppHeader';
 const options = [
   {
     title: 'Add Single / Gateway Device',
-    body: 'Use Wi-Fi provisioning first, then configure Single or Gateway role from the same universal firmware.',
+    body: 'Connect to the device by BLE and send Wi-Fi credentials through the unified firmware setup.',
     icon: Router,
-    href: { pathname: '/setup/scan-device', params: { mode: 'provision' } },
+    href: '/setup/gateway-wifi-setup',
   },
   {
     title: 'Add Child / Relay Node',
-    body: 'Configure a LoRa node over BLE. No Wi-Fi provisioning is needed for child or relay nodes.',
+    body: 'Configure a LoRa node over BLE. No Wi-Fi is needed for child or relay nodes.',
     icon: Radio,
-    href: '/setup/add-child-node',
+    href: '/pairing',
   },
   {
     title: 'Configure Existing Device',
-    body: 'Connect to a device advertising CFG_ to read status, update role, or adjust network settings.',
+    body: 'Connect to a device in Pairing Mode to read status, update Wi-Fi, reset pairing, or change network settings.',
     icon: Settings2,
-    href: { pathname: '/setup/scan-device', params: { mode: 'config' } },
+    href: '/setup/pairing-config',
   },
 ] as const;
 

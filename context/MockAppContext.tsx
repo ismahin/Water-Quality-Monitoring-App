@@ -401,12 +401,6 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
   const addRegisteredDevice = useCallback(async (deviceId: string, options?: AddRegisteredOptions) => {
     const id = deviceId.trim();
     if (!id) return;
-    const bleProvisionName =
-      options?.bleProvisionName?.startsWith('PROV_')
-        ? options.bleProvisionName
-        : id.startsWith('PROV_')
-          ? id
-          : options?.bleProvisionName;
     setRegisteredDevices((prev) => {
       const existing = prev.find((r) => r.deviceId === id);
       const entry: RegisteredDevice = {
@@ -419,7 +413,7 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
         registeredAt: existing?.registeredAt ?? new Date().toISOString(),
         provisionedAt: existing?.provisionedAt ?? new Date().toISOString(),
         pondId: options?.pondId ?? existing?.pondId ?? 'pond-a',
-        bleProvisionName,
+        bleProvisionName: options?.bleProvisionName ?? existing?.bleProvisionName,
         bleConfigName: options?.bleConfigName ?? existing?.bleConfigName,
       };
       return [entry, ...prev.filter((r) => r.deviceId !== id)];
