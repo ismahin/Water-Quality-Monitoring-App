@@ -9,19 +9,19 @@ import { AppHeader } from '../../components/AppHeader';
 const options = [
   {
     title: 'Add Single / Gateway Device',
-    body: 'Connect to the device by BLE and send Wi-Fi credentials through the unified firmware setup.',
+    body: 'Connect by BLE, select Wi-Fi, and complete the gateway setup.',
     icon: Router,
     href: '/setup/gateway-wifi-setup',
   },
   {
     title: 'Add Child / Relay Node',
-    body: 'Configure a LoRa node over BLE. No Wi-Fi is needed for child or relay nodes.',
+    body: 'Pair a LoRa child or relay node over BLE. No Wi-Fi setup is needed.',
     icon: Radio,
     href: '/pairing',
   },
   {
     title: 'Configure Existing Device',
-    body: 'Connect to a device in Pairing Mode to read status, update Wi-Fi, reset pairing, or change network settings.',
+    body: 'Read status, update Wi-Fi, reset pairing, or change network settings.',
     icon: Settings2,
     href: '/setup/pairing-config',
   },
@@ -32,7 +32,7 @@ export default function AddDeviceScreen() {
 
   return (
     <AppScreen>
-      <AppHeader title="Add device" subtitle="Universal firmware setup" onBack={() => router.back()} />
+      <AppHeader title="Add device" subtitle="Choose setup type" onBack={() => router.back()} />
 
       <View style={{ gap: spacing.md }}>
         {options.map((item) => {

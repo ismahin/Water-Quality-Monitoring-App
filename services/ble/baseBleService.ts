@@ -55,6 +55,7 @@ export async function requestBlePermissions(): Promise<{ ok: true } | { ok: fals
 
 export async function scanDevices(params: {
   serviceUuid?: string;
+  matchServiceUuid?: string;
   namePrefix: string | string[];
   onDevice: (device: BaseBleScanItem) => void;
   onError: (message: string) => void;
@@ -88,6 +89,7 @@ export async function scanDevices(params: {
       return;
     }
     const namePrefixes = Array.isArray(params.namePrefix) ? params.namePrefix : [params.namePrefix];
+    const matchServiceUuid = params.matchServiceUuid ?? params.serviceUuid;
     let totalAdvertisements = 0;
     let namedAdvertisements = 0;
     let matchedAdvertisements = 0;
@@ -117,7 +119,10 @@ export async function scanDevices(params: {
         return;
       }
 
-      const name = device.name ?? device.localName ?? '';
+      const serviceUUIDs = device.serviceUUIDs ?? [];
+      const advertisesRequestedService =
+        !!matchServiceUuid && serviceUUIDs.some((uuid) => uuid.toLowerCase() === matchServiceUuid.toLowerCase());
+      const name = device.name ?? device.localName ?? (advertisesRequestedService ? `WQMPAIR_${device.id.slice(-4)}` : '');
       if (!name) {
         if (totalAdvertisements % 25 === 0) emitStats();
         return;
@@ -131,18 +136,17 @@ export async function scanDevices(params: {
         advertisedName: device.name,
         localName: device.localName,
         rssi: device.rssi ?? -100,
-        serviceUUIDs: device.serviceUUIDs ?? [],
+        serviceUUIDs,
       };
       if (!existing || seenDevice.rssi > existing.rssi || existing.name !== seenDevice.name) {
         nearbyDevices.set(device.id, seenDevice);
-        const serviceUUIDs = seenDevice.serviceUUIDs ?? [];
         console.log(
           `[AquaNode][BLE_SCAN] Seen name="${name}" id=${device.id} rssi=${seenDevice.rssi} services=${serviceUUIDs.join(',') || 'none'}`,
         );
         emitStats();
       }
 
-      if (!namePrefixes.some((prefix) => name.startsWith(prefix))) return;
+      if (!namePrefixes.some((prefix) => name.startsWith(prefix)) && !advertisesRequestedService) return;
       matchedAdvertisements += 1;
       console.log(`[AquaNode][BLE_SCAN] Matched AquaNode device name="${name}" id=${device.id} rssi=${device.rssi ?? -100}`);
       emitStats();
@@ -165,7 +169,15 @@ export function stopScan(): void {
 export async function connectToDevice(deviceId: string): Promise<Device> {
   try {
     const manager = getSharedBleManager();
-    const device = await manager.connectToDevice(deviceId, { timeout: 12_000 });
+    let device = await manager.connectToDevice(deviceId, { timeout: 12_000 });
+    if (typeof device.requestMTU === 'function') {
+      try {
+        device = await device.requestMTU(517);
+        console.log('[BLE] MTU requested:', device.mtu ?? 517);
+      } catch (mtuError) {
+        console.log('[BLE] MTU request failed, continuing with default MTU', mtuError);
+      }
+    }
     const discovered = await device.discoverAllServicesAndCharacteristics();
     console.log('[BLE] Connected:', discovered.id, discovered.name ?? discovered.localName ?? deviceId);
     console.log('[BLE] Services discovered');
@@ -185,12 +197,18 @@ export async function disconnectDevice(device: Device | null): Promise<void> {
 }
 
 export async function writeJson(device: Device, serviceUuid: string, characteristicUuid: string, command: unknown): Promise<void> {
+  const commandJson = JSON.stringify(command);
+  const encoded = encodeBleCommand(command);
   try {
-    const commandJson = JSON.stringify(command);
     console.log('[BLE TX->RX] Sending command:', commandJson);
-    await device.writeCharacteristicWithResponseForService(serviceUuid, characteristicUuid, encodeBleCommand(command));
+    await device.writeCharacteristicWithResponseForService(serviceUuid, characteristicUuid, encoded);
   } catch (error) {
-    throw new Error(baseBleErrorMessage(error));
+    console.warn('[BLE TX->RX] Write with response failed, retrying without response:', error);
+    try {
+      await device.writeCharacteristicWithoutResponseForService(serviceUuid, characteristicUuid, encoded);
+    } catch (retryError) {
+      throw new Error(baseBleErrorMessage(retryError));
+    }
   }
 }
 
@@ -204,6 +222,32 @@ export function monitorJson<T>(
 ): Subscription {
   console.log('[BLE] TX notification monitor started');
   onDebug?.({ txMonitorStarted: true });
+  let pendingDecoded = '';
+  const parseAndEmit = (decoded: string): boolean => {
+    try {
+      const value = JSON.parse(decoded) as T;
+      console.log('[BLE JSON]', value);
+      callback(value);
+      pendingDecoded = '';
+      return true;
+    } catch (parseError) {
+      const message = parseError instanceof Error ? parseError.message : String(parseError);
+      if (message.toLowerCase().includes('end of input')) {
+        console.log('[BLE JSON PARTIAL]', decoded);
+      } else {
+        console.warn('[BLE JSON ERROR]', decoded, parseError);
+        onDebug?.({ lastError: message });
+      }
+      return false;
+    }
+  };
+  const looksLikeNewTopLevelMessage = (decoded: string): boolean =>
+    decoded.startsWith('{"type":') || decoded.startsWith('{"cmd":') || decoded.startsWith('{"t":');
+  const notificationTypeOf = (decoded: string): string | null => {
+    const match = decoded.match(/^\{"(?:type|cmd|t)":"([^"]+)"/);
+    return match?.[1] ?? null;
+  };
+
   return device.monitorCharacteristicForService(serviceUuid, characteristicUuid, (error, characteristic) => {
     if (error) {
       const message = baseBleErrorMessage(error);
@@ -218,13 +262,44 @@ export function monitorJson<T>(
     console.log('[BLE RX<-TX] Decoded:', decoded ?? '');
     onDebug?.({ lastRawResponse: raw, lastDecodedResponse: decoded ?? undefined });
     if (!decoded) return;
-    try {
-      const value = JSON.parse(decoded) as T;
-      console.log('[BLE JSON]', value);
-      callback(value);
-    } catch (parseError) {
-      console.warn('[BLE JSON ERROR]', decoded, parseError);
-      onDebug?.({ lastError: parseError instanceof Error ? parseError.message : String(parseError) });
+
+    if (pendingDecoded) {
+      const pendingType = notificationTypeOf(pendingDecoded);
+      const decodedType = notificationTypeOf(decoded);
+      if (pendingType === 'wifi_scan' && decodedType === 'parents') {
+        console.log('[BLE JSON PARTIAL] Ignoring interleaved parents notification while assembling wifi_scan');
+        return;
+      }
+      const shouldRestart =
+        looksLikeNewTopLevelMessage(decoded) &&
+        looksLikeNewTopLevelMessage(pendingDecoded) &&
+        pendingDecoded !== decoded;
+      if (shouldRestart) {
+        console.warn('[BLE JSON ERROR] Dropping incomplete notification before new message:', pendingDecoded);
+        onDebug?.({ lastError: 'Dropping incomplete notification before new message' });
+        pendingDecoded = decoded;
+      } else {
+        pendingDecoded += decoded;
+      }
+      parseAndEmit(pendingDecoded);
+      if (pendingDecoded.length > 8192) {
+        console.warn('[BLE JSON ERROR] Dropping oversized partial notification buffer');
+        onDebug?.({ lastError: 'Dropping oversized partial notification buffer' });
+        pendingDecoded = '';
+      }
+      return;
+    }
+
+    if (parseAndEmit(decoded)) return;
+
+    if (decoded.startsWith('{') || decoded.startsWith('[')) {
+      pendingDecoded = decoded;
+    }
+
+    if (pendingDecoded.length > 8192) {
+      console.warn('[BLE JSON ERROR] Dropping oversized partial notification buffer');
+      onDebug?.({ lastError: 'Dropping oversized partial notification buffer' });
+      pendingDecoded = '';
     }
   });
 }

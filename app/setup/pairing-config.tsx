@@ -77,7 +77,7 @@ export default function PairingConfigScreen() {
               <Text style={{ color: colors.mutedStrong, lineHeight: 21 }}>
                 New firmware advertises with a name starting WQM in Pairing Mode, for example WQM4EB580 or WQM_4EB580.
               </Text>
-              <PrimaryButton label={ble.scanning ? 'Scanning...' : 'Scan WQM devices'} loading={ble.scanning} onPress={() => void ble.startScan()} />
+              <PrimaryButton label={ble.scanning ? 'Scanning...' : 'Scan WQMPAIR devices'} loading={ble.scanning} onPress={() => void ble.startScan()} />
               <Text selectable style={{ color: colors.mutedStrong, lineHeight: 20 }}>{ble.scanSummary}</Text>
             </Card.Content>
           </Card>

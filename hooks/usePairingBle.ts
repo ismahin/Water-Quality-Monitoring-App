@@ -135,7 +135,7 @@ export function usePairingBle() {
         const connected = await unifiedDeviceBleService.connect(id);
         setConnectedDevice(connected);
         unifiedDeviceBleService.subscribeNotifications(handleNotification, setError);
-        await new Promise((resolve) => setTimeout(resolve, 450));
+        await new Promise((resolve) => setTimeout(resolve, 500));
         await unifiedDeviceBleService.getInfo();
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not connect to pairing device.');
@@ -158,7 +158,7 @@ export function usePairingBle() {
       getInfo: () => unifiedDeviceBleService.getInfo(),
       setIdentity: (deviceId: string, networkId: string) => unifiedDeviceBleService.setId(deviceId, networkId),
       setWifi: (ssid: string, password: string, gateway = true) => unifiedDeviceBleService.setWifi(ssid, password, gateway),
-      scanWifi: (useAlias = false) => unifiedDeviceBleService.scanWifi(useAlias),
+      scanWifi: (useAlias = false, maxResults?: number) => unifiedDeviceBleService.scanWifi(useAlias, maxResults),
       scanParents: () => unifiedDeviceBleService.scanParents(),
       startPairing: (parentId: string, role: 'CHILD' | 'RELAY', networkId: string) =>
         unifiedDeviceBleService.pairNode(parentId, role, networkId),
@@ -177,12 +177,12 @@ export function usePairingBle() {
         .slice(0, 3)
         .map((device) => `${device.name} (${device.rssi} dBm)`)
         .join(', ');
-      return `Phone sees nearby BLE devices, but none starting with WQM. Nearby: ${nearby}`;
+      return `Phone sees nearby BLE devices, but none named WQMPAIR_. Nearby: ${nearby}`;
     }
     if (scanStats.totalAdvertisements > 0) {
       return `Phone received ${scanStats.totalAdvertisements} BLE advertisements, but none had a visible name.`;
     }
-    return scanning ? 'Scanning for WQM advertisements...' : 'No BLE advertisements were reported during the last scan.';
+    return scanning ? 'Scanning for WQMPAIR advertisements...' : 'No BLE advertisements were reported during the last scan.';
   }, [devices.length, scanStats, scanning]);
 
   return {

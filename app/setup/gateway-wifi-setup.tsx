@@ -1,19 +1,17 @@
-import { Lock, Wifi } from 'lucide-react-native';
+import { Bluetooth, CheckCircle2, Cpu, Lock, Network, Radio, Router, ShieldCheck, Wifi, WifiOff } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
-import { Card, TextInput } from 'react-native-paper';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Card, Dialog, Portal, ProgressBar, TextInput } from 'react-native-paper';
 import { AppHeader } from '../../components/AppHeader';
 import { AppScreen } from '../../components/AppScreen';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { SecondaryButton } from '../../components/SecondaryButton';
-import { BleDeviceCard } from '../../components/pairing/BleDeviceCard';
-import { PairingProgress } from '../../components/pairing/PairingProgress';
-import { colors, radius, shadows, spacing } from '../../constants/theme';
+import { colors, modalSurfaceFit, radius, shadows, spacing } from '../../constants/theme';
 import { useMockApp } from '../../context/MockAppContext';
 import { useDeviceLatest } from '../../hooks/useDeviceLatest';
 import { usePairingBle } from '../../hooks/usePairingBle';
-import type { PairingProgressState, WifiScanItem } from '../../types/pairing';
+import type { WifiScanItem } from '../../types/pairing';
 import { DEFAULT_NETWORK_ID } from '../../utils/pairingUtils';
 
 function signalQuality(rssi: number): string {
@@ -21,6 +19,22 @@ function signalQuality(rssi: number): string {
   if (rssi >= -70) return 'Good';
   if (rssi >= -85) return 'Weak';
   return 'Poor';
+}
+
+function signalLevel(network: WifiScanItem): number {
+  if (typeof network.signal_level === 'number') return Math.max(1, Math.min(4, Math.round(network.signal_level)));
+  if (network.rssi >= -55) return 4;
+  if (network.rssi >= -67) return 3;
+  if (network.rssi >= -75) return 2;
+  return 1;
+}
+
+function signalIconColor(network: WifiScanItem): string {
+  const level = signalLevel(network);
+  if (level >= 4) return colors.success;
+  if (level === 3) return colors.primary;
+  if (level === 2) return colors.warning;
+  return colors.mutedStrong;
 }
 
 function dedupeWifiNetworks(items: WifiScanItem[]): WifiScanItem[] {
@@ -34,41 +48,98 @@ function dedupeWifiNetworks(items: WifiScanItem[]): WifiScanItem[] {
   return Array.from(map.values()).sort((a, b) => b.rssi - a.rssi);
 }
 
+function InfoChip({
+  icon,
+  label,
+  value,
+  tone = colors.primary,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <View
+      style={{
+        flexBasis: '48%',
+        flexGrow: 1,
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: radius.md,
+        padding: spacing.sm,
+        backgroundColor: colors.surfaceMuted,
+        gap: 6,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View style={{ width: 24, height: 24, borderRadius: 8, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' }}>
+          {icon}
+        </View>
+        <Text style={{ color: colors.mutedStrong, fontWeight: '800', fontSize: 12 }}>{label}</Text>
+      </View>
+      <Text selectable numberOfLines={1} style={{ color: tone, fontWeight: '900', fontSize: 13 }}>{value || '-'}</Text>
+    </View>
+  );
+}
+
 export default function GatewayWifiSetupScreen() {
   const router = useRouter();
   const ble = usePairingBle();
   const { addRegisteredDevice } = useMockApp();
   const [deviceId, setDeviceId] = useState('');
   const [networkId, setNetworkId] = useState(DEFAULT_NETWORK_ID);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [debugOpen, setDebugOpen] = useState(false);
-  const [identitySaved, setIdentitySaved] = useState(false);
+  const [setupStep, setSetupStep] = useState<1 | 2>(1);
   const [wifiNetworks, setWifiNetworks] = useState<WifiScanItem[]>([]);
+  const [wifiScanning, setWifiScanning] = useState(false);
   const [wifiScanRequested, setWifiScanRequested] = useState(false);
-  const [wifiScanAliasTried, setWifiScanAliasTried] = useState(false);
   const [wifiScanDone, setWifiScanDone] = useState(false);
   const [wifiScanUnavailable, setWifiScanUnavailable] = useState(false);
   const [selectedWifi, setSelectedWifi] = useState<WifiScanItem | null>(null);
+  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [successModalVisible, setSuccessModalVisible] = useState(false);
   const [manualSsid, setManualSsid] = useState('');
   const [password, setPassword] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [wifiSent, setWifiSent] = useState(false);
   const [wifiConnected, setWifiConnected] = useState(false);
+  const [wifiStatusConfirmed, setWifiStatusConfirmed] = useState(false);
   const [wifiIp, setWifiIp] = useState<string | null>(null);
   const [wifiError, setWifiError] = useState<string | null>(null);
   const [infoTimedOut, setInfoTimedOut] = useState(false);
   const [infoRequestCount, setInfoRequestCount] = useState(0);
   const [firebaseTimedOut, setFirebaseTimedOut] = useState(false);
+  const [handledWifiScanKey, setHandledWifiScanKey] = useState('');
+  const [handledWifiResultKey, setHandledWifiResultKey] = useState('');
   const fallbackDeviceId = ble.connectedDevice?.name?.startsWith('WQMPAIR_')
     ? ble.connectedDevice.name.slice('WQMPAIR_'.length)
     : ble.connectedDevice?.name ?? '';
   const effectiveDeviceId = deviceId || fallbackDeviceId;
   const { latest, status } = useDeviceLatest(networkId, effectiveDeviceId || '-');
 
-  const latestNotification = ble.notifications[0];
+  const latestWifiScanNotification = useMemo(
+    () => ble.notifications.find((notification) => notification.type === 'wifi_scan'),
+    [ble.notifications],
+  );
+  const latestWifiResultNotification = useMemo(
+    () => ble.notifications.find((notification) => notification.type === 'wifi_result'),
+    [ble.notifications],
+  );
   const firebaseSeen = !!latest || !!status;
   const selectedSsid = selectedWifi?.ssid ?? manualSsid.trim();
-  const selectedSecure = selectedWifi ? selectedWifi.secure : true;
+  const selectedSecure = selectedWifi ? selectedWifi.secure !== false : true;
+  const connectingInModal = wifiSent && !wifiConnected;
+  const setupComplete = wifiConnected && wifiStatusConfirmed && firebaseSeen;
+  const setupProgressValue = setupComplete ? 1 : wifiStatusConfirmed ? 0.78 : wifiConnected ? 0.58 : wifiSent ? 0.34 : 0.12;
+  const setupStatusText = setupComplete
+    ? 'Device added and server acknowledgement received.'
+    : wifiStatusConfirmed
+      ? 'Wi-Fi connected. Waiting for server acknowledgement...'
+      : wifiConnected
+        ? 'Device ACK received. Verifying Wi-Fi status...'
+        : wifiSent
+        ? 'Sending Wi-Fi credentials and waiting for device ACK...'
+        : 'Select a Wi-Fi network to continue.';
 
   useEffect(() => {
     if (!ble.info) return;
@@ -107,56 +178,85 @@ export default function GatewayWifiSetupScreen() {
   }, [ble.connectedDevice, ble.info]);
 
   useEffect(() => {
-    if (!ble.info || wifiScanRequested || wifiScanDone) return;
+    if (setupStep !== 2 || !ble.info || wifiScanRequested || wifiScanDone) return;
     setWifiScanRequested(true);
-    setWifiScanAliasTried(false);
-    void ble.actions.scanWifi();
-  }, [ble.actions, ble.info, wifiScanDone, wifiScanRequested]);
+    setWifiScanning(true);
+    setWifiScanUnavailable(false);
+    setWifiError(null);
+    void ble.actions.scanWifi(false);
+  }, [ble.actions, ble.info, setupStep, wifiScanDone, wifiScanRequested]);
 
   useEffect(() => {
-    if (!wifiScanRequested || wifiScanDone) return;
-    const timer = setTimeout(() => {
-      if (!wifiScanAliasTried) {
-        setWifiScanAliasTried(true);
-        void ble.actions.scanWifi(true);
+    if (!latestWifiScanNotification || latestWifiScanNotification.type !== 'wifi_scan') return;
+    const key = JSON.stringify({
+      ok: latestWifiScanNotification.ok,
+      message: latestWifiScanNotification.message,
+      count: latestWifiScanNotification.count,
+      total_found: latestWifiScanNotification.total_found,
+      items: latestWifiScanNotification.items,
+    });
+    if (key === handledWifiScanKey) return;
+    setHandledWifiScanKey(key);
+      setWifiScanning(false);
+      if (latestWifiScanNotification.ok === false) {
+        setWifiError(latestWifiScanNotification.message ?? 'Wi-Fi scan failed. Tap Refresh to try again.');
+        setWifiScanUnavailable(true);
+        setWifiScanDone(true);
         return;
       }
-      setWifiScanUnavailable(true);
-      setWifiScanDone(true);
-    }, 8000);
-    return () => clearTimeout(timer);
-  }, [ble.actions, wifiScanAliasTried, wifiScanDone, wifiScanRequested]);
-
-  useEffect(() => {
-    if (!latestNotification) return;
-    if (latestNotification.type === 'wifi_scan') {
-      if (latestNotification.ok && Array.isArray(latestNotification.items)) {
-        const networks = dedupeWifiNetworks(latestNotification.items);
+      if (Array.isArray(latestWifiScanNotification.items)) {
+        const networks = dedupeWifiNetworks(latestWifiScanNotification.items);
+        console.log('[WIFI UI] Parsed Wi-Fi scan networks:', networks.length, networks.map((network) => network.ssid).join(', '));
         setWifiNetworks(networks);
         setWifiScanUnavailable(false);
+        setWifiError(null);
         setWifiScanDone(true);
         if (!selectedWifi && !manualSsid.trim() && networks.length > 0) setSelectedWifi(networks[0]);
       } else {
         setWifiScanUnavailable(true);
         setWifiScanDone(true);
       }
-    }
-    if (latestNotification.type === 'wifi_result') {
-      if (latestNotification.ok === false) {
-        setWifiError(latestNotification.message ?? 'Wi-Fi connection failed. Please check the password and try again.');
+  }, [handledWifiScanKey, latestWifiScanNotification, manualSsid, selectedWifi]);
+
+  useEffect(() => {
+    if (!latestWifiResultNotification || latestWifiResultNotification.type !== 'wifi_result') return;
+    const key = JSON.stringify(latestWifiResultNotification);
+    if (key === handledWifiResultKey) return;
+    setHandledWifiResultKey(key);
+      if (latestWifiResultNotification.ok === false) {
+        setWifiError(latestWifiResultNotification.message ?? 'Wi-Fi connection failed. Please check the password and try again.');
+        setWifiSent(false);
         setWifiConnected(false);
+        setWifiStatusConfirmed(false);
         return;
       }
-      if (latestNotification.stage === 'connected') {
+      if (latestWifiResultNotification.stage === 'connected') {
         setWifiConnected(true);
-        setWifiIp(typeof latestNotification.ip === 'string' ? latestNotification.ip : null);
+        setWifiStatusConfirmed(false);
+        setWifiIp(typeof latestWifiResultNotification.ip === 'string' ? latestWifiResultNotification.ip : null);
+        setPasswordModalVisible(false);
+        setTimeout(() => void requestInfo(), 1000);
       }
-    }
-    if (latestNotification.type === 'set_id' && latestNotification.ok) setIdentitySaved(true);
-  }, [latestNotification, manualSsid, selectedWifi]);
+  }, [handledWifiResultKey, latestWifiResultNotification]);
 
   useEffect(() => {
     if (!wifiConnected) {
+      setWifiStatusConfirmed(false);
+      return;
+    }
+    if (ble.info?.wifi_connected) setWifiStatusConfirmed(true);
+  }, [ble.info?.wifi_connected, wifiConnected]);
+
+  useEffect(() => {
+    if (!wifiConnected || wifiStatusConfirmed || !ble.connectedDevice) return;
+    const timer = setInterval(() => {
+      void requestInfo();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [ble.connectedDevice, wifiConnected, wifiStatusConfirmed]);
+
+  useEffect(() => {
+    if (!wifiStatusConfirmed) {
       setFirebaseTimedOut(false);
       return;
     }
@@ -166,10 +266,10 @@ export default function GatewayWifiSetupScreen() {
     }
     const timer = setTimeout(() => setFirebaseTimedOut(true), 30000);
     return () => clearTimeout(timer);
-  }, [firebaseSeen, wifiConnected]);
+  }, [firebaseSeen, wifiStatusConfirmed]);
 
   useEffect(() => {
-    if (!wifiConnected || !firebaseSeen || !effectiveDeviceId) return;
+    if (!setupComplete || !effectiveDeviceId) return;
     void addRegisteredDevice(effectiveDeviceId, {
       name: effectiveDeviceId,
       networkId,
@@ -178,139 +278,281 @@ export default function GatewayWifiSetupScreen() {
       parentId: '',
       bleConfigName: ble.connectedDevice?.name ?? `WQM${effectiveDeviceId}`,
     });
-  }, [addRegisteredDevice, ble.connectedDevice?.name, effectiveDeviceId, firebaseSeen, networkId, wifiConnected]);
+  }, [addRegisteredDevice, ble.connectedDevice?.name, effectiveDeviceId, networkId, setupComplete]);
 
-  const progress = useMemo<PairingProgressState>(
-    () => ({
-      bleConnected: !!ble.connectedDevice,
-      infoLoaded: !!ble.info,
-      wifiScanDone,
-      wifiSent,
-      wifiConnected,
-      serverTestConfirmed: firebaseSeen,
-      error: wifiError ?? (firebaseTimedOut ? 'Wi-Fi connected, but server test was not confirmed. Check Firebase settings.' : undefined),
-    }),
-    [ble.connectedDevice, ble.info, firebaseSeen, firebaseTimedOut, identitySaved, wifiConnected, wifiError, wifiScanDone, wifiSent],
-  );
-
-  const advancedProgress = useMemo<PairingProgressState>(
-    () => ({
-      bleConnected: !!ble.connectedDevice,
-      infoLoaded: !!ble.info,
-      identitySaved,
-    }),
-    [ble.connectedDevice, ble.info, identitySaved],
-  );
+  useEffect(() => {
+    if (setupComplete) setSuccessModalVisible(true);
+  }, [setupComplete]);
 
   const connectDisabled = !ble.connectedDevice || !selectedSsid || (selectedSecure && !password);
 
   const refreshWifi = async () => {
+    setWifiError(null);
+    setWifiNetworks([]);
+    setHandledWifiScanKey('');
     setWifiScanRequested(true);
-    setWifiScanAliasTried(false);
     setWifiScanDone(false);
     setWifiScanUnavailable(false);
-    await ble.actions.scanWifi();
-  };
-
-  const saveIdentity = async () => {
-    if (!deviceId.trim() || !networkId.trim()) return;
-    setIdentitySaved(false);
-    await ble.actions.setIdentity(deviceId.trim(), networkId.trim());
+    setWifiScanning(true);
+    if (!ble.info) {
+      setWifiScanning(false);
+      setWifiScanRequested(false);
+      await requestInfo();
+      setWifiError('Device info is still loading. Wi-Fi scan will start after info is received.');
+      return;
+    }
+    await ble.actions.scanWifi(false);
   };
 
   const sendWifi = async () => {
     if (connectDisabled) return;
     setWifiError(null);
     setWifiSent(true);
+    setWifiConnected(false);
+    setWifiStatusConfirmed(false);
+    setSuccessModalVisible(false);
     await ble.actions.setWifi(selectedSsid, password, true);
   };
 
-  const resetForAnother = async () => {
-    await ble.disconnect();
-    router.replace('/setup/gateway-wifi-setup');
+  const openWifiPasswordModal = (network: WifiScanItem) => {
+    setSelectedWifi(network);
+    setManualSsid('');
+    setPassword('');
+    setWifiError(null);
+    setPasswordModalVisible(true);
   };
+
+  const openManualWifiModal = () => {
+    setSelectedWifi(null);
+    setManualSsid('');
+    setPassword('');
+    setWifiError(null);
+    setPasswordModalVisible(true);
+  };
+
+  const resetWifiStepState = () => {
+    setWifiNetworks([]);
+    setWifiScanning(false);
+    setWifiScanRequested(false);
+    setWifiScanDone(false);
+    setWifiScanUnavailable(false);
+    setSelectedWifi(null);
+    setManualSsid('');
+    setPassword('');
+    setWifiSent(false);
+    setWifiConnected(false);
+    setWifiStatusConfirmed(false);
+    setWifiIp(null);
+    setWifiError(null);
+    setFirebaseTimedOut(false);
+    setHandledWifiScanKey('');
+    setHandledWifiResultKey('');
+    setPasswordModalVisible(false);
+    setSuccessModalVisible(false);
+  };
+
+  const disconnectAndRescan = async () => {
+    resetWifiStepState();
+    setSetupStep(1);
+    await ble.disconnect();
+    await ble.startScan();
+  };
+
+  const goToWifiStep = () => {
+    resetWifiStepState();
+    setSetupStep(2);
+  };
+
+  if (setupStep === 1) {
+    return (
+      <AppScreen scroll={false} contentStyle={{ paddingBottom: 0 }}>
+        <AppHeader
+          title="Add device"
+          subtitle="Scan and connect to your WQMPAIR device"
+          wizardStep={{ current: 1, total: 2 }}
+          onBack={() => {
+            void ble.disconnect();
+            router.back();
+          }}
+        />
+
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.lg }}
+        >
+          {ble.error ? (
+            <Card style={{ borderRadius: radius.lg, backgroundColor: '#FEF2F2' }}>
+              <Card.Content>
+                <Text selectable style={{ color: colors.danger, fontWeight: '800' }}>{ble.error}</Text>
+              </Card.Content>
+            </Card>
+          ) : null}
+
+          <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, ...shadows.soft }}>
+            <Card.Content style={{ gap: spacing.md }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 18 }}>BLE device scan</Text>
+                  <Text style={{ color: colors.mutedStrong, marginTop: 4 }}>Put the device in Pairing Mode. It should advertise as WQMPAIR_.</Text>
+                </View>
+                <SecondaryButton label={ble.scanning ? 'Scanning...' : 'Scan'} disabled={ble.scanning || ble.connecting} onPress={() => void ble.startScan()} />
+              </View>
+
+              <View
+                style={{
+                  maxHeight: 300,
+                  minHeight: 170,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  borderRadius: radius.lg,
+                  backgroundColor: colors.surfaceMuted,
+                  overflow: 'hidden',
+                }}
+              >
+                <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: spacing.sm, gap: spacing.sm }}>
+                  {ble.devices.length === 0 ? (
+                    <View style={{ minHeight: 130, alignItems: 'center', justifyContent: 'center', gap: spacing.sm }}>
+                      <Bluetooth size={30} color={colors.mutedStrong} />
+                      <Text style={{ color: colors.mutedStrong, textAlign: 'center' }}>
+                        {ble.scanning ? 'Scanning for nearby WQMPAIR devices...' : 'No BLE devices found yet. Tap Scan.'}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {ble.devices.map((device) => {
+                    const connected = ble.connectedDevice?.id === device.id;
+                    return (
+                      <View
+                        key={device.id}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: connected ? colors.primary : colors.border,
+                          borderRadius: radius.md,
+                          backgroundColor: connected ? '#EEF6FF' : colors.card,
+                          padding: spacing.sm,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: spacing.sm,
+                        }}
+                      >
+                        <View style={{ width: 38, height: 38, borderRadius: 14, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' }}>
+                          <Bluetooth size={20} color={connected ? colors.success : colors.primary} />
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text selectable numberOfLines={1} style={{ color: colors.navy, fontWeight: '900' }}>{device.name}</Text>
+                          <Text numberOfLines={1} style={{ color: colors.mutedStrong, fontWeight: '700', fontSize: 12 }}>
+                            {device.deviceId} - {device.rssi} dBm
+                          </Text>
+                        </View>
+                        {connected ? (
+                          <SecondaryButton label="Disconnect" disabled={ble.connecting} onPress={() => void disconnectAndRescan()} />
+                        ) : (
+                          <PrimaryButton label="Connect" loading={ble.connecting} disabled={ble.connecting || !!ble.connectedDevice} onPress={() => void ble.connect(device.id)} />
+                        )}
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              <Text selectable style={{ color: colors.mutedStrong, lineHeight: 20 }}>{ble.scanSummary}</Text>
+            </Card.Content>
+          </Card>
+
+          {ble.connectedDevice ? (
+            <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, ...shadows.soft }}>
+              <Card.Content style={{ gap: spacing.md }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 18 }}>Connected device</Text>
+                    <Text selectable numberOfLines={1} style={{ color: colors.success, fontWeight: '800', marginTop: 4 }}>
+                      {ble.connectedDevice.name}
+                    </Text>
+                  </View>
+                  <SecondaryButton label="Disconnect" disabled={ble.connecting} onPress={() => void disconnectAndRescan()} />
+                </View>
+
+                {!ble.info ? (
+                  <View style={{ gap: spacing.sm }}>
+                    <Text style={{ color: colors.mutedStrong }}>Loading device information...</Text>
+                    {infoTimedOut ? (
+                      <>
+                        <Text style={{ color: colors.warning, fontWeight: '800' }}>Device info was not received yet.</Text>
+                        <SecondaryButton label="Retry info" onPress={() => void requestInfo()} />
+                      </>
+                    ) : null}
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
+                    <InfoChip icon={<Cpu size={14} color={colors.primary} />} label="Device ID" value={ble.info.device_id} />
+                    <InfoChip icon={<Network size={14} color={colors.primary} />} label="Network" value={ble.info.network_id || DEFAULT_NETWORK_ID} />
+                    <InfoChip icon={<Router size={14} color={colors.primary} />} label="Role" value={ble.info.role} />
+                    <InfoChip icon={<ShieldCheck size={14} color={colors.primary} />} label="Mode" value={ble.info.switch_mode} />
+                    <InfoChip
+                      icon={<Radio size={14} color={ble.info.lora_ready ? colors.success : colors.warning} />}
+                      label="LoRa"
+                      value={ble.info.lora_ready ? 'Ready' : 'Not ready'}
+                      tone={ble.info.lora_ready ? colors.success : colors.warning}
+                    />
+                    <InfoChip
+                      icon={ble.info.wifi_connected ? <Wifi size={14} color={colors.success} /> : <WifiOff size={14} color={colors.mutedStrong} />}
+                      label="Wi-Fi"
+                      value={ble.info.wifi_connected ? 'Connected' : 'Not connected'}
+                      tone={ble.info.wifi_connected ? colors.success : colors.mutedStrong}
+                    />
+                  </View>
+                )}
+              </Card.Content>
+            </Card>
+          ) : null}
+        </ScrollView>
+
+        <View
+          style={{
+            borderTopWidth: 1,
+            borderTopColor: colors.border,
+            backgroundColor: colors.background,
+            paddingTop: spacing.md,
+            paddingBottom: spacing.md,
+            gap: spacing.sm,
+          }}
+        >
+          <PrimaryButton label="Step 2: Wi-Fi connection" disabled={!ble.connectedDevice} onPress={goToWifiStep} />
+          {!ble.connectedDevice ? (
+            <Text style={{ color: colors.mutedStrong, textAlign: 'center', fontWeight: '700' }}>Connect a BLE device to continue.</Text>
+          ) : null}
+        </View>
+      </AppScreen>
+    );
+  }
 
   return (
     <AppScreen>
       <AppHeader
         title="Add Single / Gateway Device"
         subtitle="Connect by BLE and send Wi-Fi credentials"
-        onBack={() => {
-          void ble.disconnect();
-          router.back();
-        }}
+        wizardStep={{ current: 2, total: 2 }}
+        onBack={() => setSetupStep(1)}
       />
-
-      {ble.error ? (
-        <Card style={{ borderRadius: radius.lg, backgroundColor: '#FEF2F2', marginBottom: spacing.md }}>
-          <Card.Content>
-            <Text selectable style={{ color: colors.danger, fontWeight: '800' }}>{ble.error}</Text>
-          </Card.Content>
-        </Card>
-      ) : null}
 
       {!ble.connectedDevice ? (
         <View style={{ gap: spacing.md }}>
-          <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, ...shadows.soft }}>
-            <Card.Content style={{ gap: spacing.sm }}>
-              <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 18 }}>Turn the device switch to Pairing Mode.</Text>
-              <Text style={{ color: colors.mutedStrong, lineHeight: 21 }}>
-                The blue LED should blink while the device advertises as WQMPAIR_WQM...
-              </Text>
-              <PrimaryButton label={ble.scanning ? 'Scanning...' : 'Scan WQM devices'} loading={ble.scanning} onPress={() => void ble.startScan()} />
-              <Text selectable style={{ color: colors.mutedStrong, lineHeight: 20 }}>{ble.scanSummary}</Text>
+          <Card style={{ borderRadius: radius.xl, backgroundColor: '#FEF2F2', ...shadows.soft }}>
+            <Card.Content style={{ gap: spacing.md }}>
+              <Text style={{ color: colors.danger, fontWeight: '900', fontSize: 18 }}>BLE device disconnected</Text>
+              <Text style={{ color: colors.mutedStrong }}>Go back to Step 1 and reconnect the device before setting up Wi-Fi.</Text>
+              <PrimaryButton label="Back to BLE scan" onPress={() => setSetupStep(1)} />
             </Card.Content>
           </Card>
-
-          {ble.devices.length === 0 && !ble.scanning ? (
-            <Text style={{ color: colors.mutedStrong }}>
-              No device found. Make sure the switch is in Pairing Mode and the blue LED is blinking.
-            </Text>
-          ) : null}
-
-          {ble.devices.map((device) => (
-            <BleDeviceCard key={device.id} device={device} loading={ble.connecting} onConnect={() => void ble.connect(device.id)} />
-          ))}
         </View>
       ) : (
         <View style={{ gap: spacing.md }}>
           <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, ...shadows.soft }}>
-            <Card.Content style={{ gap: spacing.sm }}>
-              <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 18 }}>Device info</Text>
-              {!ble.info ? (
-                <>
-                  <Text style={{ color: colors.mutedStrong }}>Loading device info...</Text>
-                  {infoTimedOut ? (
-                    <>
-                      <Text style={{ color: colors.warning, fontWeight: '800' }}>
-                        Device connected, but info was not received. Keep the device nearby and tap Retry.
-                      </Text>
-                      <SecondaryButton label="Retry device info" onPress={() => void requestInfo()} />
-                      <Text style={{ color: colors.mutedStrong, lineHeight: 20 }}>
-                        Check Serial Monitor. You should see BLE RX command: {'{"cmd":"info"}'}.
-                      </Text>
-                    </>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <Text selectable style={{ color: colors.mutedStrong }}>Device ID: {ble.info.device_id}</Text>
-                  <Text selectable style={{ color: colors.mutedStrong }}>Network ID: {ble.info.network_id || DEFAULT_NETWORK_ID}</Text>
-                  <Text style={{ color: colors.mutedStrong }}>Role: {ble.info.role}</Text>
-                  <Text style={{ color: colors.mutedStrong }}>Switch mode: {ble.info.switch_mode}</Text>
-                  <Text style={{ color: colors.mutedStrong }}>Wi-Fi connected: {ble.info.wifi_connected ? 'Yes' : 'No'}</Text>
-                  <Text style={{ color: colors.mutedStrong }}>LoRa ready: {ble.info.lora_ready ? 'Yes' : 'No'}</Text>
-                  <Text style={{ color: colors.mutedStrong }}>Paired: {ble.info.paired ? 'Yes' : 'No'}</Text>
-                </>
-              )}
-            </Card.Content>
-          </Card>
-
-          <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, ...shadows.soft }}>
             <Card.Content style={{ gap: spacing.md }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm }}>
                 <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 18 }}>Wi-Fi networks</Text>
-                <SecondaryButton label="Refresh Wi-Fi List" onPress={() => void refreshWifi()} />
+                <SecondaryButton label={wifiScanning ? 'Scanning...' : 'Refresh'} disabled={wifiScanning} onPress={() => void refreshWifi()} />
               </View>
 
               {wifiScanUnavailable ? (
@@ -321,155 +563,165 @@ export default function GatewayWifiSetupScreen() {
 
               {wifiScanDone && wifiNetworks.length === 0 ? (
                 <Text style={{ color: colors.mutedStrong }}>
-                  No Wi-Fi networks found. Tap Refresh or enter SSID manually.
+                  No Wi-Fi networks found. Tap Refresh or add a network manually.
                 </Text>
               ) : null}
 
-              {wifiNetworks.map((network) => {
-                const selected = selectedWifi?.ssid === network.ssid;
-                return (
-                  <Pressable
-                    key={network.ssid}
-                    onPress={() => {
-                      setSelectedWifi(network);
-                      setManualSsid('');
-                    }}
-                    style={{
-                      borderWidth: 1,
-                      borderColor: selected ? colors.primary : colors.border,
-                      borderRadius: radius.lg,
-                      padding: spacing.md,
-                      backgroundColor: selected ? '#EEF6FF' : colors.card,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: spacing.sm,
-                    }}
-                  >
-                    <Wifi size={22} color={selected ? colors.primary : colors.mutedStrong} />
-                    <View style={{ flex: 1 }}>
-                      <Text selectable style={{ color: colors.navy, fontWeight: '900' }}>{network.ssid}</Text>
-                      <Text style={{ color: colors.mutedStrong }}>{signalQuality(network.rssi)} ({network.rssi} dBm)</Text>
-                    </View>
-                    {network.secure ? <Lock size={18} color={colors.mutedStrong} /> : null}
-                  </Pressable>
-                );
-              })}
-
-              <TextInput
-                mode="outlined"
-                label="Enter SSID manually"
-                value={manualSsid}
-                onChangeText={(value) => {
-                  setManualSsid(value);
-                  if (value.trim()) setSelectedWifi(null);
+              <View
+                style={{
+                  maxHeight: 390,
+                  minHeight: 230,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  borderRadius: radius.lg,
+                  backgroundColor: colors.surfaceMuted,
+                  overflow: 'hidden',
                 }}
-                autoCapitalize="none"
-              />
-
-              {selectedSsid ? (
-                <Text selectable style={{ color: colors.navy, fontWeight: '900' }}>Selected network: {selectedSsid}</Text>
-              ) : null}
-
-              <TextInput
-                mode="outlined"
-                label="Wi-Fi password"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!passwordVisible}
-                right={<TextInput.Icon icon={passwordVisible ? 'eye-off' : 'eye'} onPress={() => setPasswordVisible((prev) => !prev)} />}
-              />
-              {!selectedSecure && selectedSsid ? (
-                <Text style={{ color: colors.mutedStrong }}>This network is open, so the password is optional.</Text>
-              ) : null}
-              {!ble.info ? (
-                <Text style={{ color: colors.warning, fontWeight: '800' }}>
-                  Device info is still loading. Wi-Fi can be tested using fallback device ID {effectiveDeviceId || 'unknown'} and network {networkId}.
-                </Text>
-              ) : null}
-              <PrimaryButton label="Connect to Wi-Fi" disabled={connectDisabled} onPress={() => void sendWifi()} />
-            </Card.Content>
-          </Card>
-
-          {__DEV__ ? (
-            <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, ...shadows.soft }}>
-              <Card.Content style={{ gap: spacing.sm }}>
-                <Pressable
-                  onPress={() => setDebugOpen((prev) => !prev)}
-                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
-                >
-                  <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 18 }}>BLE Debug</Text>
-                  <Text style={{ color: colors.primary, fontWeight: '900' }}>{debugOpen ? 'Hide' : 'Show'}</Text>
-                </Pressable>
-                {debugOpen ? (
-                  <>
-                    <Text selectable style={{ color: colors.mutedStrong }}>Connected device name: {ble.debug.connectedDeviceName ?? '-'}</Text>
-                    <Text selectable style={{ color: colors.mutedStrong }}>Connected device ID: {ble.debug.connectedDeviceId ?? '-'}</Text>
-                    <Text style={{ color: colors.mutedStrong }}>Service UUID found: {ble.debug.serviceFound ? 'Yes' : 'No'}</Text>
-                    <Text style={{ color: colors.mutedStrong }}>RX characteristic found: {ble.debug.rxFound ? 'Yes' : 'No'}</Text>
-                    <Text style={{ color: colors.mutedStrong }}>TX characteristic found: {ble.debug.txFound ? 'Yes' : 'No'}</Text>
-                    <Text style={{ color: colors.mutedStrong }}>TX monitor started: {ble.debug.txMonitorStarted ? 'Yes' : 'No'}</Text>
-                    <Text selectable style={{ color: colors.mutedStrong }}>Last command sent: {ble.debug.lastCommand ?? '-'}</Text>
-                    <Text selectable style={{ color: colors.mutedStrong }}>Last raw response: {ble.debug.lastRawResponse ?? '-'}</Text>
-                    <Text selectable style={{ color: colors.mutedStrong }}>Last decoded response: {ble.debug.lastDecodedResponse ?? '-'}</Text>
-                    <Text selectable style={{ color: colors.danger }}>Last error: {ble.debug.lastError ?? '-'}</Text>
-                  </>
-                ) : null}
-              </Card.Content>
-            </Card>
-          ) : null}
-
-          <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, ...shadows.soft }}>
-            <Card.Content style={{ gap: spacing.sm }}>
-              <Pressable
-                onPress={() => setAdvancedOpen((prev) => !prev)}
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
               >
-                <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 18 }}>Advanced Settings</Text>
-                <Text style={{ color: colors.primary, fontWeight: '900' }}>{advancedOpen ? 'Hide' : 'Show'}</Text>
-              </Pressable>
-              {advancedOpen ? (
-                <>
-                  <TextInput mode="outlined" label="Rename Device ID" value={deviceId} onChangeText={setDeviceId} autoCapitalize="characters" />
-                  <TextInput mode="outlined" label="Change Network ID" value={networkId} onChangeText={setNetworkId} autoCapitalize="characters" />
-                  <PrimaryButton label="Save Identity" disabled={!deviceId.trim() || !networkId.trim()} onPress={() => void saveIdentity()} />
-                  <PairingProgress progress={advancedProgress} />
-                </>
-              ) : null}
+                <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: spacing.sm, gap: spacing.sm }}>
+                  {wifiNetworks.length === 0 ? (
+                    <View style={{ minHeight: 170, alignItems: 'center', justifyContent: 'center', gap: spacing.sm }}>
+                      <Wifi size={32} color={colors.mutedStrong} />
+                      <Text style={{ color: colors.mutedStrong, textAlign: 'center' }}>
+                        {wifiScanning ? 'Scanning nearby Wi-Fi networks...' : 'Wi-Fi networks will appear here.'}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {wifiNetworks.map((network) => {
+                    return (
+                      <Pressable
+                        key={network.ssid}
+                        onPress={() => openWifiPasswordModal(network)}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          borderRadius: radius.md,
+                          padding: spacing.md,
+                          backgroundColor: colors.card,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: spacing.sm,
+                        }}
+                      >
+                        <Wifi size={24} color={signalIconColor(network)} strokeWidth={1.8 + signalLevel(network) * 0.35} />
+                        <View style={{ flex: 1 }}>
+                          <Text selectable numberOfLines={1} style={{ color: colors.navy, fontWeight: '900' }}>{network.ssid}</Text>
+                          <Text style={{ color: colors.mutedStrong }}>
+                            {network.secure === false ? 'Open' : 'Locked/Secured'} - {network.rssi} dBm - {signalQuality(network.rssi)}
+                          </Text>
+                        </View>
+                        {network.secure === false ? null : <Lock size={18} color={colors.mutedStrong} />}
+                      </Pressable>
+                    );
+                  })}
+
+                  <SecondaryButton label="Add network manually" disabled={!ble.connectedDevice} onPress={openManualWifiModal} />
+                </ScrollView>
+              </View>
             </Card.Content>
           </Card>
 
-          <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, ...shadows.soft }}>
-            <Card.Content style={{ gap: spacing.md }}>
-              <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 18 }}>Setup progress</Text>
-              <PairingProgress progress={progress} />
-              {wifiIp ? <Text selectable style={{ color: colors.mutedStrong }}>Device IP: {wifiIp}</Text> : null}
-              {wifiConnected && !firebaseSeen && !firebaseTimedOut ? (
-                <Text style={{ color: colors.warning, fontWeight: '800' }}>
-                  Wi-Fi connected. Waiting for Firebase data at networks/{networkId}/devices/{deviceId}/latest or status.
-                </Text>
-              ) : null}
-            </Card.Content>
-          </Card>
-
-          {wifiConnected && firebaseSeen ? (
-            <Card style={{ borderRadius: radius.xl, backgroundColor: '#ECFDF5', ...shadows.soft }}>
+          {(wifiSent || wifiConnected) ? (
+            <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, ...shadows.soft }}>
               <Card.Content style={{ gap: spacing.md }}>
-                <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 20 }}>Device connected successfully</Text>
-                <Text selectable style={{ color: colors.mutedStrong }}>Device ID: {effectiveDeviceId}</Text>
-                <Text selectable style={{ color: colors.mutedStrong }}>Network ID: {networkId}</Text>
-                <Text selectable style={{ color: colors.mutedStrong }}>Wi-Fi SSID: {selectedSsid}</Text>
-                <Text selectable style={{ color: colors.mutedStrong }}>IP address: {wifiIp ?? '-'}</Text>
-                <Text style={{ color: colors.success, fontWeight: '900' }}>Firebase status: Connected</Text>
-                <Text style={{ color: colors.mutedStrong }}>Role: Single/Gateway</Text>
-                <Text style={{ color: colors.navy, fontWeight: '900' }}>Turn the device switch back to Normal Mode.</Text>
-                <PrimaryButton label="Go to Dashboard" onPress={() => router.replace({ pathname: '/devices/[deviceId]', params: { deviceId: effectiveDeviceId, networkId } })} />
-                <SecondaryButton label="Add Another Device" onPress={() => void resetForAnother()} />
-                <SecondaryButton label="Done" onPress={() => router.replace('/(tabs)/devices')} />
+                <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 18 }}>Connection progress</Text>
+                <ProgressBar progress={setupProgressValue} color={setupComplete ? colors.success : colors.primary} style={{ height: 10, borderRadius: 999 }} />
+                <Text style={{ color: firebaseTimedOut ? colors.warning : colors.mutedStrong, fontWeight: '800' }}>
+                  {firebaseTimedOut ? 'Wi-Fi connected, but server acknowledgement was not received yet.' : setupStatusText}
+                </Text>
+                {selectedSsid ? <Text selectable style={{ color: colors.mutedStrong }}>SSID: {selectedSsid}</Text> : null}
+                {wifiIp ? <Text selectable style={{ color: colors.mutedStrong }}>Device IP: {wifiIp}</Text> : null}
               </Card.Content>
             </Card>
           ) : null}
         </View>
       )}
+      <Portal>
+        <Dialog visible={passwordModalVisible} dismissable={!connectingInModal} onDismiss={() => setPasswordModalVisible(false)} style={modalSurfaceFit}>
+          <Dialog.Title>Connect to Wi-Fi</Dialog.Title>
+          <Dialog.Content>
+            <View style={{ gap: spacing.md }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+                {selectedWifi ? <Wifi size={24} color={signalIconColor(selectedWifi)} strokeWidth={1.8 + signalLevel(selectedWifi) * 0.35} /> : null}
+                <View style={{ flex: 1 }}>
+                  <Text selectable style={{ color: colors.navy, fontWeight: '900', fontSize: 17 }}>{selectedSsid || 'Wi-Fi network'}</Text>
+                  {selectedWifi ? (
+                    <Text style={{ color: colors.mutedStrong }}>
+                      {selectedWifi.secure === false ? 'Open' : 'Locked/Secured'} - {selectedWifi.rssi} dBm
+                    </Text>
+                  ) : (
+                    <Text style={{ color: colors.mutedStrong }}>Manual network</Text>
+                  )}
+                </View>
+              </View>
+
+              {!selectedWifi ? (
+                <TextInput
+                  mode="outlined"
+                  label="Network name"
+                  value={manualSsid}
+                  onChangeText={setManualSsid}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              ) : null}
+
+              {selectedSecure ? (
+                <TextInput
+                  mode="outlined"
+                  label="Wi-Fi password"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!passwordVisible}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  right={<TextInput.Icon icon={passwordVisible ? 'eye-off' : 'eye'} onPress={() => setPasswordVisible((prev) => !prev)} />}
+                />
+              ) : (
+                <Text style={{ color: colors.mutedStrong }}>This network is open, so no password is required.</Text>
+              )}
+
+              {wifiError ? <Text selectable style={{ color: colors.danger, fontWeight: '800' }}>{wifiError}</Text> : null}
+
+              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                <SecondaryButton label="Cancel" disabled={connectingInModal} style={{ flex: 1 }} onPress={() => setPasswordModalVisible(false)} />
+                <PrimaryButton
+                  label={connectingInModal ? 'Connecting...' : wifiError ? 'Reconnect' : 'Connect'}
+                  disabled={connectDisabled}
+                  loading={connectingInModal}
+                  style={{ flex: 1 }}
+                  onPress={() => void sendWifi()}
+                />
+              </View>
+            </View>
+          </Dialog.Content>
+        </Dialog>
+
+        <Dialog visible={successModalVisible} dismissable={false} style={modalSurfaceFit}>
+          <Dialog.Content>
+            <View style={{ alignItems: 'center', gap: spacing.md, paddingTop: spacing.md }}>
+              <View style={{ width: 72, height: 72, borderRadius: 28, backgroundColor: '#DCFCE7', alignItems: 'center', justifyContent: 'center' }}>
+                <CheckCircle2 size={42} color={colors.success} />
+              </View>
+              <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 22, textAlign: 'center' }}>Device added successfully</Text>
+              <Text style={{ color: colors.mutedStrong, textAlign: 'center', lineHeight: 21 }}>
+                Wi-Fi connected, device acknowledgement received, and app server check completed.
+              </Text>
+              <View style={{ width: '100%', gap: spacing.sm }}>
+                <Text selectable style={{ color: colors.mutedStrong }}>Device ID: {effectiveDeviceId}</Text>
+                <Text selectable style={{ color: colors.mutedStrong }}>Network ID: {networkId}</Text>
+                <Text selectable style={{ color: colors.mutedStrong }}>Wi-Fi SSID: {selectedSsid}</Text>
+              </View>
+              <PrimaryButton
+                label="Go to Dashboard"
+                style={{ width: '100%' }}
+                onPress={() => router.replace({ pathname: '/devices/[deviceId]', params: { deviceId: effectiveDeviceId, networkId } })}
+              />
+            </View>
+          </Dialog.Content>
+        </Dialog>
+      </Portal>
     </AppScreen>
   );
 }

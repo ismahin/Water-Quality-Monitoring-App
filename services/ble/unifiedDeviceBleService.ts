@@ -8,8 +8,6 @@ export const UNIFIED_SERVICE_UUID = '8b6d0001-9d7a-4f5a-a909-5ccbd0e00100';
 export const UNIFIED_RX_UUID = '8b6d0002-9d7a-4f5a-a909-5ccbd0e00100';
 export const UNIFIED_TX_UUID = '8b6d0003-9d7a-4f5a-a909-5ccbd0e00100';
 export const WQM_PAIR_NAME_PREFIX = 'WQMPAIR_';
-export const WQM_DEVICE_NAME_PREFIX = 'WQM';
-export const WQM_SCAN_NAME_PREFIXES = [WQM_PAIR_NAME_PREFIX, WQM_DEVICE_NAME_PREFIX] as const;
 
 const MOCK_PARENTS: PairingParent[] = [
   { id: 'M1', role: 'GATEWAY', network_id: 'POND_001', root_gateway_id: 'M1', parent_id: '', depth: 0, child_count: 1, max_children: 5, rssi: -38, snr: 8.1, age_ms: 900 },
@@ -18,8 +16,6 @@ const MOCK_PARENTS: PairingParent[] = [
 
 function parseDeviceIdFromName(name: string): string {
   if (name.startsWith(WQM_PAIR_NAME_PREFIX)) return name.slice(WQM_PAIR_NAME_PREFIX.length);
-  if (name.startsWith('WQM_')) return name.slice('WQM_'.length);
-  if (name.startsWith(WQM_DEVICE_NAME_PREFIX)) return name.slice(WQM_DEVICE_NAME_PREFIX.length);
   return name;
 }
 
@@ -43,10 +39,11 @@ export class UnifiedDeviceBleService {
     onStats?: (stats: BaseBleScanStats) => void,
   ): Promise<void> {
     await scanDevices({
-      namePrefix: [...WQM_SCAN_NAME_PREFIXES],
+      matchServiceUuid: UNIFIED_SERVICE_UUID,
+      namePrefix: WQM_PAIR_NAME_PREFIX,
       mockDevices: [
         { id: 'mock-pair-m1', name: 'WQMPAIR_M1', rssi: -44 },
-        { id: 'mock-pair-c1', name: 'WQMC1', rssi: -56 },
+        { id: 'mock-pair-c1', name: 'WQMPAIR_C1', rssi: -56 },
       ],
       onDevice: (device) => onDevice({ ...device, deviceId: parseDeviceIdFromName(device.name) }),
       onError,
@@ -60,7 +57,7 @@ export class UnifiedDeviceBleService {
 
   async connect(deviceId: string): Promise<{ id: string; name: string }> {
     if (MOCK_BLE_CONFIG) {
-      return { id: deviceId, name: WQM_SCAN_NAME_PREFIXES.some((prefix) => deviceId.startsWith(prefix)) ? deviceId : `WQM${deviceId}` };
+      return { id: deviceId, name: deviceId.startsWith(WQM_PAIR_NAME_PREFIX) ? deviceId : `WQMPAIR_${deviceId}` };
     }
     this.currentDevice = await connectToDevice(deviceId);
     const connected = { id: this.currentDevice.id, name: this.currentDevice.name ?? this.currentDevice.localName ?? deviceId };
@@ -130,6 +127,9 @@ export class UnifiedDeviceBleService {
         rxFound = characteristics.some((item) => item.uuid.toLowerCase() === UNIFIED_RX_UUID);
         txFound = characteristics.some((item) => item.uuid.toLowerCase() === UNIFIED_TX_UUID);
       }
+      console.log('[BLE] Service found:', !!service, UNIFIED_SERVICE_UUID);
+      console.log('[BLE] RX found:', rxFound, UNIFIED_RX_UUID);
+      console.log('[BLE] TX found:', txFound, UNIFIED_TX_UUID);
       this.emitDebug({ serviceFound: !!service, rxFound, txFound });
     } catch (error) {
       this.emitDebug({ lastError: error instanceof Error ? error.message : String(error) });
@@ -148,8 +148,11 @@ export class UnifiedDeviceBleService {
     return this.writeCommand({ cmd: 'set_wifi', ssid, password, gateway });
   }
 
-  scanWifi(useAlias = false): Promise<void> {
-    return this.writeCommand({ cmd: useAlias ? 'wifi_scan' : 'scan_wifi' });
+  scanWifi(useAlias = false, maxResults?: number): Promise<void> {
+    return this.writeCommand({
+      cmd: useAlias ? 'wifi_scan' : 'scan_wifi',
+      ...(typeof maxResults === 'number' ? { max_results: maxResults } : {}),
+    });
   }
 
   scanParents(): Promise<void> {
