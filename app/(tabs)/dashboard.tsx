@@ -95,25 +95,32 @@ export default function DashboardScreen() {
 
   const liveReg = registeredDevices[0];
   const liveSnap = liveReg ? getLiveSnapshot(liveReg.deviceId) : undefined;
-  const liveHasLatest = !!liveSnap?.latest;
   const liveHasAnyFirebase = !!(liveSnap?.latest || liveSnap?.status);
   const showLiveFirebaseUi = !!liveReg && isFirebaseConfigured();
-  const dataSourceIsLive = showLiveFirebaseUi && liveHasAnyFirebase;
-  const waitingForTelemetry = showLiveFirebaseUi && !liveHasAnyFirebase;
+  const liveContextDevice = liveReg ? devices.find((d) => d.id === liveReg.deviceId && d.isLive) ?? null : null;
+  const contextHasTelemetry =
+    !!liveContextDevice &&
+    (liveContextDevice.sensors.ph !== 0 ||
+      liveContextDevice.sensors.tdsPpm !== 0 ||
+      liveContextDevice.sensors.temperatureC !== 0 ||
+      liveContextDevice.sensors.turbidityNtu !== 0 ||
+      liveContextDevice.online !== 'offline');
+  const dataSourceIsLive = showLiveFirebaseUi && (liveHasAnyFirebase || contextHasTelemetry);
+  const waitingForTelemetry = showLiveFirebaseUi && !liveHasAnyFirebase && !contextHasTelemetry;
 
   const telemetryDevice = useMemo(() => {
     if (showLiveFirebaseUi && liveReg) {
-      return devices.find((d) => d.id === liveReg.deviceId) ?? null;
+      return liveContextDevice;
     }
     return gateway ?? null;
-  }, [showLiveFirebaseUi, liveReg, devices, gateway]);
+  }, [showLiveFirebaseUi, liveReg, liveContextDevice, gateway]);
 
   const statusDevice = useMemo(() => {
     if (showLiveFirebaseUi && liveReg) {
-      return devices.find((d) => d.id === liveReg.deviceId) ?? null;
+      return liveContextDevice;
     }
     return gateway ?? null;
-  }, [showLiveFirebaseUi, liveReg, devices, gateway]);
+  }, [showLiveFirebaseUi, liveReg, liveContextDevice, gateway]);
 
   const liveWifi = telemetryDevice && usesWifiUi(telemetryDevice) ? (telemetryDevice as SingleDevice | GatewayDevice) : null;
 

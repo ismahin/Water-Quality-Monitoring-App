@@ -2,6 +2,37 @@ export type PairingDeviceRole = 'SINGLE' | 'GATEWAY' | 'RELAY' | 'CHILD' | 'UNPA
 
 export type SwitchMode = 'NORMAL' | 'PAIRING';
 
+export function toBool(value: unknown): boolean {
+  return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+function toOptionalBool(value: unknown): boolean | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  return toBool(value);
+}
+
+function toStringField(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function toNumberField(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+}
+
+function normalizePairingRole(value: unknown): PairingDeviceRole {
+  const role = typeof value === 'string' ? value.toUpperCase() : '';
+  if (role === 'SINGLE' || role === 'GATEWAY' || role === 'RELAY' || role === 'CHILD' || role === 'UNPAIRED' || role === 'RELAY_CANDIDATE') return role;
+  return 'UNPAIRED';
+}
+
+function normalizeSwitchMode(value: unknown): SwitchMode | string {
+  const mode = typeof value === 'string' ? value.toUpperCase() : '';
+  if (mode === 'PAIRING' || mode === 'NORMAL') return mode;
+  return mode || 'PAIRING';
+}
+
 export type PairingCommand =
   | { cmd: 'info' }
   | { cmd: 'scan' }
@@ -13,16 +44,114 @@ export type PairingCommand =
   | { cmd: 'reset_pair' }
   | { cmd: 'factory' };
 
-export interface PairingBleInfo {
+export interface PairingDeviceInfo {
+  type?: 'info';
+  ok?: boolean;
+  deviceId: string;
+  networkId: string;
+  role: PairingDeviceRole;
+  switchMode: SwitchMode | string;
+  parentId?: string;
+  rootGatewayId?: string;
+  gatewayUplinkEnabled?: boolean;
+  relayEnabled?: boolean;
+  depth?: number;
+  sampleIntervalMs?: number;
+  loraReady: boolean;
+  wifiConnected?: boolean;
+  hasWifiCredentials?: boolean;
+  wifiSsid?: string;
+  ip?: string;
+  paired: boolean;
+  bleConnected?: boolean;
+  fw?: string;
+  autoRelayPromotion?: boolean;
+  smartRouting?: boolean;
+  forwardQueueSize?: number;
+}
+
+export interface PairingBleInfo extends PairingDeviceInfo {
   device_id: string;
   network_id: string;
-  role: PairingDeviceRole;
-  switch_mode: SwitchMode;
+  switch_mode: SwitchMode | string;
   parent_id?: string;
   root_gateway_id?: string;
+  gateway_uplink_enabled?: boolean;
+  relay_enabled?: boolean;
+  sample_interval_ms?: number;
   lora_ready: boolean;
   wifi_connected: boolean;
-  paired: boolean;
+  has_wifi_credentials?: boolean;
+  wifi_ssid?: string;
+  ble_connected?: boolean;
+  auto_relay_promotion?: boolean;
+  smart_routing?: boolean;
+  forward_queue_size?: number;
+}
+
+export function normalizeDeviceInfo(rawValue: unknown, fallbackDeviceId = ''): PairingBleInfo | null {
+  if (!rawValue || typeof rawValue !== 'object') return null;
+  const raw = rawValue as Record<string, unknown>;
+  const deviceId = toStringField(raw.device_id) ?? toStringField(raw.deviceId) ?? fallbackDeviceId;
+  if (!deviceId) return null;
+  const networkId = toStringField(raw.network_id) ?? toStringField(raw.networkId) ?? 'POND_001';
+  const switchMode = normalizeSwitchMode(raw.switch_mode ?? raw.switchMode);
+  const parentId = toStringField(raw.parent_id) ?? toStringField(raw.parentId);
+  const rootGatewayId = toStringField(raw.root_gateway_id) ?? toStringField(raw.rootGatewayId);
+  const gatewayUplinkEnabled = toOptionalBool(raw.gateway_uplink_enabled ?? raw.gatewayUplinkEnabled);
+  const relayEnabled = toOptionalBool(raw.relay_enabled ?? raw.relayEnabled);
+  const sampleIntervalMs = toNumberField(raw.sample_interval_ms ?? raw.sampleIntervalMs);
+  const wifiConnected = toOptionalBool(raw.wifi_connected ?? raw.wifiConnected);
+  const hasWifiCredentials = toOptionalBool(raw.has_wifi_credentials ?? raw.hasWifiCredentials);
+  const wifiSsid = toStringField(raw.wifi_ssid) ?? toStringField(raw.wifiSsid);
+  const bleConnected = toOptionalBool(raw.ble_connected ?? raw.bleConnected);
+  const autoRelayPromotion = toOptionalBool(raw.auto_relay_promotion ?? raw.autoRelayPromotion);
+  const smartRouting = toOptionalBool(raw.smart_routing ?? raw.smartRouting);
+  const forwardQueueSize = toNumberField(raw.forward_queue_size ?? raw.forwardQueueSize);
+  const loraReady = toBool(raw.lora_ready) || toBool(raw.loraReady);
+  const paired = toBool(raw.paired);
+
+  return {
+    type: 'info',
+    ok: toOptionalBool(raw.ok),
+    deviceId,
+    networkId,
+    role: normalizePairingRole(raw.role),
+    switchMode,
+    parentId,
+    rootGatewayId,
+    gatewayUplinkEnabled,
+    relayEnabled,
+    depth: toNumberField(raw.depth),
+    sampleIntervalMs,
+    loraReady,
+    wifiConnected,
+    hasWifiCredentials,
+    wifiSsid,
+    ip: toStringField(raw.ip),
+    paired,
+    bleConnected,
+    fw: toStringField(raw.fw),
+    autoRelayPromotion,
+    smartRouting,
+    forwardQueueSize,
+    device_id: deviceId,
+    network_id: networkId,
+    switch_mode: switchMode,
+    parent_id: parentId,
+    root_gateway_id: rootGatewayId,
+    gateway_uplink_enabled: gatewayUplinkEnabled,
+    relay_enabled: relayEnabled,
+    sample_interval_ms: sampleIntervalMs,
+    lora_ready: loraReady,
+    wifi_connected: wifiConnected ?? false,
+    has_wifi_credentials: hasWifiCredentials,
+    wifi_ssid: wifiSsid,
+    ble_connected: bleConnected,
+    auto_relay_promotion: autoRelayPromotion,
+    smart_routing: smartRouting,
+    forward_queue_size: forwardQueueSize,
+  };
 }
 
 export interface PairingParent {
@@ -32,8 +161,8 @@ export interface PairingParent {
   root_gateway_id: string;
   parent_id?: string;
   depth: number;
-  child_count: number;
-  max_children: number;
+  child_count?: number;
+  max_children?: number;
   rssi?: number;
   snr?: number;
   age_ms?: number;
@@ -49,6 +178,7 @@ export interface PairingProgressState {
   roleSelected?: boolean;
   parentSelected?: boolean;
   pairStarted?: boolean;
+  parentAccepted?: boolean;
   pairSaved?: boolean;
   serverTestSent?: boolean;
   serverTestConfirmed?: boolean;
@@ -89,6 +219,10 @@ export interface BleDebugState {
   lastRawResponse?: string;
   lastDecodedResponse?: string;
   lastError?: string;
+  lastInfoJson?: string;
+  lastParentsJson?: string;
+  rawInfoLoraReady?: string;
+  normalizedInfoLoraReady?: string;
 }
 
 export type PairingNotification =

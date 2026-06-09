@@ -232,7 +232,7 @@ export default function GatewayWifiSetupScreen() {
       }
       if (latestWifiResultNotification.stage === 'connected') {
         setWifiConnected(true);
-        setWifiStatusConfirmed(false);
+        setWifiStatusConfirmed(true);
         setWifiIp(typeof latestWifiResultNotification.ip === 'string' ? latestWifiResultNotification.ip : null);
         setPasswordModalVisible(false);
         setTimeout(() => void requestInfo(), 1000);

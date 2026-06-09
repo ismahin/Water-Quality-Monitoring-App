@@ -14,8 +14,8 @@ const options = [
     href: '/setup/gateway-wifi-setup',
   },
   {
-    title: 'Add Child / Relay Node',
-    body: 'Pair a LoRa child or relay node over BLE. No Wi-Fi setup is needed.',
+    title: 'Add Child / Extend Network',
+    body: 'Add a new sensor node under a gateway, relay, or existing child. Existing child devices can automatically become relays.',
     icon: Radio,
     href: '/pairing',
   },

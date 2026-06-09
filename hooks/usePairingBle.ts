@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { normalizeDeviceInfo } from '../types/pairing';
 import type { BleDebugState, PairingBleDevice, PairingBleInfo, PairingNotification, PairingParent } from '../types/pairing';
 import type { BaseBleScanStats } from '../services/ble/baseBleService';
 import { unifiedDeviceBleService } from '../services/ble/unifiedDeviceBleService';
@@ -12,26 +13,8 @@ function fallbackDeviceIdFromName(name?: string): string {
 function normalizeInfoNotification(notification: PairingNotification, fallbackName?: string): PairingBleInfo | null {
   const raw = notification as Record<string, unknown>;
   const marker = raw.type ?? raw.cmd ?? raw.t;
-  const hasDeviceFields = typeof raw.device_id === 'string' || typeof raw.network_id === 'string';
-  if (marker !== 'info' && marker !== 'hello' && !hasDeviceFields) return null;
-  const deviceId =
-    typeof raw.device_id === 'string' && raw.device_id.trim()
-      ? raw.device_id
-      : fallbackDeviceIdFromName(fallbackName);
-  if (!deviceId) return null;
-  const role = typeof raw.role === 'string' ? raw.role.toUpperCase() : 'UNPAIRED';
-  const switchMode = typeof raw.switch_mode === 'string' ? raw.switch_mode.toUpperCase() : 'PAIRING';
-  return {
-    device_id: deviceId,
-    network_id: typeof raw.network_id === 'string' && raw.network_id.trim() ? raw.network_id : 'POND_001',
-    role: role === 'SINGLE' || role === 'GATEWAY' || role === 'RELAY' || role === 'CHILD' || role === 'UNPAIRED' || role === 'RELAY_CANDIDATE' ? role : 'UNPAIRED',
-    switch_mode: switchMode === 'NORMAL' || switchMode === 'PAIRING' ? switchMode : 'PAIRING',
-    parent_id: typeof raw.parent_id === 'string' ? raw.parent_id : undefined,
-    root_gateway_id: typeof raw.root_gateway_id === 'string' ? raw.root_gateway_id : undefined,
-    lora_ready: raw.lora_ready === true,
-    wifi_connected: raw.wifi_connected === true,
-    paired: raw.paired === true,
-  };
+  if (marker !== 'info' && marker !== 'hello') return null;
+  return normalizeDeviceInfo(raw, fallbackDeviceIdFromName(fallbackName));
 }
 
 function isParentsNotification(notification: PairingNotification): notification is PairingNotification & { items: PairingParent[] } {
@@ -71,8 +54,17 @@ export function usePairingBle() {
   const handleNotification = useCallback((notification: PairingNotification) => {
     setNotifications((prev) => [notification, ...prev].slice(0, 20));
     const infoNotification = normalizeInfoNotification(notification, connectedDevice?.name);
-    if (infoNotification) setInfo(infoNotification);
+    if (infoNotification) {
+      setInfo(infoNotification);
+      setDebug((prev) => ({
+        ...prev,
+        lastInfoJson: JSON.stringify(notification),
+        rawInfoLoraReady: String((notification as Record<string, unknown>).lora_ready ?? (notification as Record<string, unknown>).loraReady ?? '-'),
+        normalizedInfoLoraReady: String(infoNotification.loraReady),
+      }));
+    }
     if (isParentsNotification(notification)) {
+      setDebug((prev) => ({ ...prev, lastParentsJson: JSON.stringify(notification) }));
       setParents((prev) => {
         const map = new Map(prev.map((parent) => [parent.id, parent]));
         notification.items.forEach((parent) => {

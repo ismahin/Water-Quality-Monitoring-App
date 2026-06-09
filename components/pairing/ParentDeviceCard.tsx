@@ -13,7 +13,10 @@ type Props = {
 };
 
 export function ParentDeviceCard({ parent, selected, disabled, onSelect }: Props) {
-  const full = parent.child_count >= parent.max_children;
+  const full =
+    typeof parent.child_count === 'number' && typeof parent.max_children === 'number'
+      ? parent.child_count >= parent.max_children
+      : false;
   return (
     <Card
       style={{
@@ -38,7 +41,7 @@ export function ParentDeviceCard({ parent, selected, disabled, onSelect }: Props
           </Chip>
         </View>
         <Text style={{ color: colors.mutedStrong }}>Root {parent.root_gateway_id} · Parent {parent.parent_id || '-'} · Depth {parent.depth}</Text>
-        <Text style={{ color: colors.mutedStrong }}>Children {parent.child_count}/{parent.max_children} · RSSI {parent.rssi ?? '-'} · SNR {parent.snr ?? '-'}</Text>
+        <Text style={{ color: colors.mutedStrong }}>Children {parent.child_count ?? '-'}/{parent.max_children ?? '-'} · RSSI {parent.rssi ?? '-'} · SNR {parent.snr ?? '-'}</Text>
         <Text style={{ color: colors.muted }}>Age {Math.round((parent.age_ms ?? 0) / 1000)} sec</Text>
         <PrimaryButton
           label={full ? 'Parent Full' : selected ? 'Selected Parent' : 'Connect to this parent'}

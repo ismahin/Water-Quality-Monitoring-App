@@ -1,4 +1,4 @@
-# WQM Firmware v3.2.5 Integration Testing
+# WQM Firmware v3.2.8 Integration Testing
 
 Use a real Android development build. BLE does not work in Expo Go.
 
@@ -28,19 +28,20 @@ Use a real Android development build. BLE does not work in Expo Go.
 9. App should confirm Firebase data at `networks/{networkId}/devices/{deviceId}/latest` or `status`.
 10. On success, turn the device switch back to Normal Mode.
 
-## Child / Relay Pairing
+## Add Child / Extend Network
 
-1. Put the new child/relay node in Pairing Mode.
-2. Put the existing gateway/relay parent in Pairing Mode.
-3. In the app, open Add Device -> Add Child / Relay Node.
+1. Put the new child node in Pairing Mode.
+2. Put the existing gateway, relay, or child parent in Pairing Mode.
+3. In the app, open Add Device -> Add Child / Extend Network.
 4. Scan and select the new `WQMPAIR_` device.
-5. Save identity if needed.
-6. Select role `CHILD` or `RELAY`.
-7. App sends `{"cmd":"scan"}`.
-8. Firmware returns `{"type":"parents","items":[...]}`.
-9. Select parent and pair.
-10. Firmware returns `pair_started`, then `pair_result` with `stage:"saved"`, then `server_test`.
-11. App waits for Firebase confirmation and then shows success.
+5. Do not connect to the old parent device; the parent is discovered by LoRa.
+6. App validates the new device is in Pairing Mode and LoRa is ready.
+7. App sends `{"cmd":"scan"}`. It must not send `scan_wifi`.
+8. Firmware returns `{"type":"parents","items":[...]}` with `GATEWAY`, `RELAY`, or `RELAY_CANDIDATE` parents.
+9. Select parent and pair. App sends `{"cmd":"pair","parent_id":"...","role":"CHILD","network_id":"..."}`.
+10. If the parent is `RELAY_CANDIDATE`, firmware automatically promotes it from child to relay.
+11. Firmware returns `pair_started`, then `pair_result` with `stage:"saved"`, then `server_test`.
+12. App shows the final route and Firebase confirmation if available.
 
 ## Configure Existing Device
 

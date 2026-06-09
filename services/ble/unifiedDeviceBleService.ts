@@ -12,6 +12,7 @@ export const WQM_PAIR_NAME_PREFIX = 'WQMPAIR_';
 const MOCK_PARENTS: PairingParent[] = [
   { id: 'M1', role: 'GATEWAY', network_id: 'POND_001', root_gateway_id: 'M1', parent_id: '', depth: 0, child_count: 1, max_children: 5, rssi: -38, snr: 8.1, age_ms: 900 },
   { id: 'R1', role: 'RELAY', network_id: 'POND_001', root_gateway_id: 'M1', parent_id: 'M1', depth: 1, child_count: 1, max_children: 5, rssi: -57, snr: 6.4, age_ms: 1200 },
+  { id: 'C1', role: 'RELAY_CANDIDATE', network_id: 'POND_001', root_gateway_id: 'M1', parent_id: 'M1', depth: 1, child_count: 0, max_children: 5, rssi: -49, snr: 7.2, age_ms: 1000 },
 ];
 
 function parseDeviceIdFromName(name: string): string {
@@ -206,7 +207,15 @@ export class UnifiedDeviceBleService {
     if (command.cmd === 'scan') this.mockCallback({ type: 'parents', items: MOCK_PARENTS });
     if (command.cmd === 'pair') {
       this.mockCallback({ type: 'pair_started', ok: true, parent_id: command.parent_id, role: command.role });
-      setTimeout(() => this.mockCallback?.({ type: 'pair_result', ok: true, stage: 'saved', parent_id: command.parent_id, root_gateway_id: command.parent_id.startsWith('M') ? command.parent_id : 'M1' }), 600);
+      const selectedParent = MOCK_PARENTS.find((parent) => parent.id === command.parent_id);
+      setTimeout(() => this.mockCallback?.({
+        type: 'pair_result',
+        ok: true,
+        stage: 'saved',
+        parent_id: command.parent_id,
+        root_gateway_id: selectedParent?.root_gateway_id ?? (command.parent_id.startsWith('M') ? command.parent_id : 'M1'),
+        auto_promoted: selectedParent?.role === 'RELAY_CANDIDATE',
+      }), 600);
       setTimeout(() => this.mockCallback?.({ type: 'server_test', status: 'sent', test_id: `${command.role}_MOCK_${Date.now()}` }), 1100);
     }
     if (command.cmd === 'reset_pair') this.mockCallback({ type: 'reset_pair', ok: true });

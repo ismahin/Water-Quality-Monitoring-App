@@ -15,10 +15,58 @@ import { AppHeader } from '../../components/AppHeader';
 import { DeviceStatusCard } from '../../components/DeviceStatusCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
 
+type DeviceRow = {
+  device: AquaDevice;
+  depth: number;
+};
+
+function deviceParentId(device: AquaDevice): string | undefined {
+  return 'parentId' in device && device.parentId ? device.parentId : undefined;
+}
+
+function orderNetworkTree(devices: AquaDevice[]): DeviceRow[] {
+  const byId = new Map(devices.map((device) => [device.id, device]));
+  const childrenByParent = new Map<string, AquaDevice[]>();
+  for (const device of devices) {
+    const parentId = deviceParentId(device);
+    if (!parentId || parentId === device.id) continue;
+    const list = childrenByParent.get(parentId) ?? [];
+    list.push(device);
+    childrenByParent.set(parentId, list);
+  }
+  childrenByParent.forEach((items) => items.sort((a, b) => a.id.localeCompare(b.id)));
+
+  const roleOrder = { gateway: 0, relay: 1, child: 2, single: 3 } as const;
+  const roots = devices
+    .filter((device) => {
+      const parentId = deviceParentId(device);
+      return !parentId || !byId.has(parentId) || parentId === device.id;
+    })
+    .sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || a.id.localeCompare(b.id));
+
+  const rows: DeviceRow[] = [];
+  const seen = new Set<string>();
+  const walk = (device: AquaDevice, depth: number) => {
+    if (seen.has(device.id)) return;
+    seen.add(device.id);
+    rows.push({ device, depth });
+    for (const child of childrenByParent.get(device.id) ?? []) {
+      walk(child, depth + 1);
+    }
+  };
+
+  roots.forEach((device) => walk(device, 0));
+  devices
+    .filter((device) => !seen.has(device.id))
+    .sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || a.id.localeCompare(b.id))
+    .forEach((device) => walk(device, 0));
+  return rows;
+}
+
 export default function DevicesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { devices, registeredDevices } = useMockApp();
+  const { devices } = useMockApp();
   const [tabSnackbar, setTabSnackbar] = useState<string | null>(null);
 
   useFocusEffect(
@@ -40,36 +88,35 @@ export default function DevicesScreen() {
     }, []),
   );
 
-  const registeredIds = new Set(registeredDevices.map((r) => r.deviceId));
   const demoDevices = devices.filter((d) => !d.isLive);
-  const liveDevices = devices.filter((d) => d.isLive && registeredIds.has(d.id));
-  const liveNetworkDevices = devices.filter((d) => d.isLive && !registeredIds.has(d.id));
+  const liveDevices = orderNetworkTree(devices.filter((d) => d.isLive));
 
   const order: AquaDevice['role'][] = ['gateway', 'relay', 'child', 'single'];
-  const demoDevicesFlat = order.flatMap((role) => demoDevices.filter((d) => d.role === role));
+  const demoDevicesFlat = order.flatMap((role) => demoDevices.filter((d) => d.role === role)).map((device) => ({ device, depth: 0 }));
 
   const sections =
-    liveDevices.length > 0 || liveNetworkDevices.length > 0
+    liveDevices.length > 0
       ? [
-          { title: 'Live Devices', data: liveDevices },
-          { title: 'Gateway Children / Relays', data: liveNetworkDevices },
+          { title: 'Live Network', data: liveDevices },
           { title: 'Demo Devices', data: demoDevicesFlat },
         ].filter((section) => section.data.length > 0)
       : [{ title: 'Demo Devices', data: demoDevicesFlat }];
 
   const listHeader = (
     <View>
-      <AppHeader title="Devices" subtitle={liveDevices.length || liveNetworkDevices.length ? 'Live hardware + demo fallback' : 'Grouped by role'} />
+      <AppHeader title="Devices" subtitle={liveDevices.length ? 'Live gateway, relay, and child tree' : 'Grouped by role'} />
       <PrimaryButton label="Add device" onPress={() => router.push('/setup/add-device')} />
     </View>
   );
+
+  const allLiveNames = new Map(devices.filter((d) => d.isLive).map((device) => [device.id, device.name]));
 
   return (
     <AppScreen scroll={false}>
       <SectionList
         style={{ flex: 1 }}
         sections={sections}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.device.id}
         ListHeaderComponent={listHeader}
         contentContainerStyle={{
           paddingBottom: Math.max(insets.bottom, spacing.md) + spacing.xl,
@@ -80,11 +127,15 @@ export default function DevicesScreen() {
           </Text>
         )}
         renderItem={({ item }) => (
-          <View style={{ marginBottom: spacing.md }}>
+          <View style={{ marginBottom: spacing.md, marginLeft: item.depth * 18 }}>
             <DeviceStatusCard
-              device={item}
-              parentName={'parentId' in item ? getParentName(item) ?? item.parentId : undefined}
-              onPress={() => router.push(`/device/${item.id}`)}
+              device={item.device}
+              parentName={
+                'parentId' in item.device && item.device.parentId
+                  ? allLiveNames.get(item.device.parentId) ?? getParentName(item.device) ?? item.device.parentId
+                  : undefined
+              }
+              onPress={() => router.push(`/device/${item.device.id}`)}
             />
           </View>
         )}

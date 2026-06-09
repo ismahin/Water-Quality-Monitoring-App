@@ -1,6 +1,6 @@
 # AquaNode
 
-AquaNode is a React Native / Expo app for an ESP32-S3 water quality monitoring system. The current firmware source of truth is WQM Unified Firmware v3.2.5, which uses a custom BLE JSON service for pairing, Wi-Fi setup, and LoRa mesh configuration.
+AquaNode is a React Native / Expo app for an ESP32-S3 water quality monitoring system. The current firmware source of truth is WQM Unified Firmware v3.2.8 AutoRelay + SmartRouting, which uses a custom BLE JSON service for pairing, Wi-Fi setup, and LoRa mesh configuration.
 
 ## Firmware BLE Contract
 
@@ -69,7 +69,7 @@ If using ADB manually:
 ## App Setup Flows
 
 - Add Single / Gateway Device: scan `WQMPAIR_`, read `info`, scan Wi-Fi, send `set_wifi`, and wait for Firebase confirmation.
-- Add Child / Relay Node: scan `WQMPAIR_`, read `info`, scan LoRa parents with `scan`, send `pair`, and wait for `server_test`.
+- Add Child / Extend Network: scan `WQMPAIR_` for the new device only, read `info`, scan LoRa parents with `{"cmd":"scan"}`, send `pair` with role `CHILD`, and wait for `pair_result` plus `server_test`. Parents may be `GATEWAY`, `RELAY`, or `RELAY_CANDIDATE`; relay promotion is automatic in firmware.
 - Configure Existing Device: scan `WQMPAIR_`, read info, and send `set_id`, `set_wifi`, `reset_pair`, or `factory`.
 
 ## Debug Logs

@@ -202,10 +202,12 @@ export async function writeJson(device: Device, serviceUuid: string, characteris
   try {
     console.log('[BLE TX->RX] Sending command:', commandJson);
     await device.writeCharacteristicWithResponseForService(serviceUuid, characteristicUuid, encoded);
+    console.log('[BLE TX->RX] Write with response succeeded');
   } catch (error) {
     console.warn('[BLE TX->RX] Write with response failed, retrying without response:', error);
     try {
       await device.writeCharacteristicWithoutResponseForService(serviceUuid, characteristicUuid, encoded);
+      console.log('[BLE TX->RX] Write without response succeeded');
     } catch (retryError) {
       throw new Error(baseBleErrorMessage(retryError));
     }
@@ -224,8 +226,9 @@ export function monitorJson<T>(
   onDebug?.({ txMonitorStarted: true });
   let pendingDecoded = '';
   const parseAndEmit = (decoded: string): boolean => {
+    const normalized = decoded.trim();
     try {
-      const value = JSON.parse(decoded) as T;
+      const value = JSON.parse(normalized) as T;
       console.log('[BLE JSON]', value);
       callback(value);
       pendingDecoded = '';
@@ -233,18 +236,18 @@ export function monitorJson<T>(
     } catch (parseError) {
       const message = parseError instanceof Error ? parseError.message : String(parseError);
       if (message.toLowerCase().includes('end of input')) {
-        console.log('[BLE JSON PARTIAL]', decoded);
+        console.log('[BLE JSON PARTIAL]', normalized);
       } else {
-        console.warn('[BLE JSON ERROR]', decoded, parseError);
+        console.warn('[BLE JSON ERROR]', normalized, parseError);
         onDebug?.({ lastError: message });
       }
       return false;
     }
   };
   const looksLikeNewTopLevelMessage = (decoded: string): boolean =>
-    decoded.startsWith('{"type":') || decoded.startsWith('{"cmd":') || decoded.startsWith('{"t":');
+    decoded.trim().startsWith('{"type":') || decoded.trim().startsWith('{"cmd":') || decoded.trim().startsWith('{"t":');
   const notificationTypeOf = (decoded: string): string | null => {
-    const match = decoded.match(/^\{"(?:type|cmd|t)":"([^"]+)"/);
+    const match = decoded.trim().match(/^\{"(?:type|cmd|t)":"([^"]+)"/);
     return match?.[1] ?? null;
   };
 
@@ -257,7 +260,7 @@ export function monitorJson<T>(
       return;
     }
     const raw = characteristic?.value ?? '';
-    const decoded = decodeBleText(raw);
+    const decoded = decodeBleText(raw)?.trim();
     console.log('[BLE RX<-TX] Raw base64:', raw);
     console.log('[BLE RX<-TX] Decoded:', decoded ?? '');
     onDebug?.({ lastRawResponse: raw, lastDecodedResponse: decoded ?? undefined });

@@ -9,7 +9,8 @@ import React, {
   useState,
 } from 'react';
 import type { AquaAlert } from '../types/alert';
-import type { AquaDevice, ChildDevice, GatewayDevice, RelayDevice, SingleDevice } from '../types/device';
+import type { AquaDevice, ChildDevice, DeviceOnlineStatus, GatewayDevice, RelayDevice, SingleDevice } from '../types/device';
+import type { NetworkDevice, TopologyNode } from '../types/networkDevice';
 import type { Pond } from '../types/pond';
 import type { SensorThresholds } from '../types/sensor';
 import type { FirebaseChildSnapshot, FirebaseDeviceSnapshot, FirebaseNetworkNode } from '../types/firebase';
@@ -30,6 +31,9 @@ import {
   subscribeToDeviceNetwork,
   subscribeToOwnDevice,
 } from '../services/firebase/deviceTelemetryService';
+import { subscribeNetworkDevices } from '../services/firebase/deviceService';
+import { subscribeTopology } from '../services/firebase/topologyService';
+import { DEFAULT_NETWORK_ID } from '../utils/pairingUtils';
 
 const KEYS = {
   onboarded: '@aquanode/hasCompletedOnboarding',
@@ -203,6 +207,167 @@ function deviceSort(a: AquaDevice, b: AquaDevice): number {
   return order[a.role] - order[b.role] || a.id.localeCompare(b.id);
 }
 
+function dateFromMaybeMs(value?: number): string {
+  if (!value) return new Date().toISOString();
+  const timestamp = value < 10_000_000_000 ? Date.now() - value : value;
+  return new Date(timestamp).toISOString();
+}
+
+function mapNetworkDeviceToAppDevice(device: NetworkDevice, displayName?: string): AquaDevice {
+  const latest = device.latest;
+  const status = device.status;
+  const role = device.displayRole === 'GATEWAY'
+    ? 'gateway'
+    : device.displayRole === 'RELAY'
+      ? 'relay'
+      : device.displayRole === 'CHILD' || device.displayRole === 'RELAY_CANDIDATE'
+        ? 'child'
+        : 'single';
+  const parentId = status?.parent_id ?? latest?.parent_id ?? '';
+  const rootGatewayId = status?.root_gateway_id ?? latest?.root_gateway_id ?? (role === 'gateway' ? device.id : undefined);
+  const lastSeenAt = dateFromMaybeMs(device.lastSeenMs);
+  const online: DeviceOnlineStatus = device.online === true ? 'online' : device.online === false ? 'offline' : 'warning';
+  const common = {
+    id: device.id,
+    name: displayName ?? device.id,
+    pondId: 'pond-a',
+    online,
+    batteryPercent: status?.battery ?? latest?.battery ?? 0,
+    lastSeenAt,
+    lastDataAt: lastSeenAt,
+    sensors: {
+      ph: latest?.ph ?? 0,
+      tdsPpm: latest?.tds ?? 0,
+      temperatureC: latest?.temperature ?? 0,
+      turbidityNtu: latest?.turbidity ?? 0,
+    },
+    calibrationStatus: 'ok' as const,
+    firmwareVersion: '1.0.0',
+    universalRole: device.displayRole as UniversalRole,
+    hardwareMode: role === 'single' ? 'SINGLE' : 'NETWORK',
+    networkId: latest?.network_id,
+    parentId,
+    rootGatewayId,
+    gatewayId: rootGatewayId,
+    isLive: true,
+    isDemo: false,
+  };
+
+  if (role === 'gateway') {
+    return {
+      ...common,
+      role,
+      wifiSsid: '-',
+      wifiRssi: -100,
+      cloudOnline: true,
+      loraGatewayEnabled: true,
+      gatewayUplinkEnabled: true,
+      childDeviceIds: [],
+    } satisfies GatewayDevice;
+  }
+
+  if (role === 'relay') {
+    return {
+      ...common,
+      role,
+      parentId,
+      relayEnabled: true,
+      loraRssi: status?.rssi ?? latest?.rssi ?? -120,
+      loraSnr: status?.snr ?? latest?.snr ?? 0,
+      packetSuccessPercent: latest ? 100 : 0,
+      childDeviceIds: [],
+    } satisfies RelayDevice;
+  }
+
+  if (role === 'child') {
+    return {
+      ...common,
+      role,
+      parentId,
+      relayEnabled: false,
+      loraRssi: status?.rssi ?? latest?.rssi ?? -120,
+      loraSnr: status?.snr ?? latest?.snr ?? 0,
+      packetSuccessPercent: latest ? 100 : 0,
+    } satisfies ChildDevice;
+  }
+
+  return {
+    ...common,
+    role,
+    wifiSsid: '-',
+    wifiRssi: -100,
+    cloudOnline: true,
+  } satisfies SingleDevice;
+}
+
+function mapTopologyNodeToAppDevice(node: TopologyNode, networkId: string, displayName?: string): AquaDevice {
+  const role = node.role === 'GATEWAY'
+    ? 'gateway'
+    : node.role === 'RELAY'
+      ? 'relay'
+      : 'child';
+  const rootGatewayId = node.root_gateway_id || (role === 'gateway' ? node.device_id : undefined);
+  const lastSeenAt = dateFromMaybeMs(node.last_seen_ms);
+  const online: DeviceOnlineStatus = node.online === true ? 'online' : node.online === false ? 'offline' : 'warning';
+  const common = {
+    id: node.device_id,
+    name: displayName ?? node.device_id,
+    pondId: 'pond-a',
+    online,
+    batteryPercent: node.battery ?? 0,
+    lastSeenAt,
+    lastDataAt: lastSeenAt,
+    sensors: { ph: 0, tdsPpm: 0, temperatureC: 0, turbidityNtu: 0 },
+    calibrationStatus: 'ok' as const,
+    firmwareVersion: '1.0.0',
+    universalRole: node.role as UniversalRole,
+    hardwareMode: role === 'gateway' ? 'NETWORK' : 'NETWORK',
+    networkId,
+    parentId: node.parent_id ?? '',
+    rootGatewayId,
+    gatewayId: rootGatewayId,
+    route: node.route,
+    isLive: true,
+    isDemo: false,
+  };
+
+  if (role === 'gateway') {
+    return {
+      ...common,
+      role,
+      wifiSsid: '-',
+      wifiRssi: -100,
+      cloudOnline: true,
+      loraGatewayEnabled: true,
+      gatewayUplinkEnabled: true,
+      childDeviceIds: [],
+    } satisfies GatewayDevice;
+  }
+
+  if (role === 'relay') {
+    return {
+      ...common,
+      role,
+      parentId: node.parent_id ?? '',
+      relayEnabled: true,
+      loraRssi: node.rssi ?? -120,
+      loraSnr: node.snr ?? 0,
+      packetSuccessPercent: node.last_seen_ms ? 100 : 0,
+      childDeviceIds: [],
+    } satisfies RelayDevice;
+  }
+
+  return {
+    ...common,
+    role,
+    parentId: node.parent_id ?? '',
+    relayEnabled: false,
+    loraRssi: node.rssi ?? -120,
+    loraSnr: node.snr ?? 0,
+    packetSuccessPercent: node.last_seen_ms ? 100 : 0,
+  } satisfies ChildDevice;
+}
+
 function inferGatewayIds(registered: RegisteredDevice[], liveDevices: AquaDevice[]): string[] {
   const ids = new Set<string>();
   for (const reg of registered) {
@@ -215,6 +380,30 @@ function inferGatewayIds(registered: RegisteredDevice[], liveDevices: AquaDevice
     if (device.rootGatewayId) ids.add(device.rootGatewayId);
   }
   return Array.from(ids).filter(Boolean);
+}
+
+function inferNetworkIds(registered: RegisteredDevice[], liveDevices: AquaDevice[]): string[] {
+  const ids = new Set<string>([DEFAULT_NETWORK_ID]);
+  for (const reg of registered) {
+    if (reg.networkId) ids.add(reg.networkId);
+  }
+  for (const device of liveDevices) {
+    if (device.networkId) ids.add(device.networkId);
+  }
+  return Array.from(ids).filter(Boolean);
+}
+
+function mergeLiveDevices(...groups: AquaDevice[][]): AquaDevice[] {
+  const byId = new Map<string, AquaDevice>();
+  for (const group of groups) {
+    for (const device of group) {
+      const existing = byId.get(device.id);
+      if (!existing || (existing.role === 'single' && device.role !== 'single')) {
+        byId.set(device.id, device);
+      }
+    }
+  }
+  return Array.from(byId.values()).sort(deviceSort);
 }
 
 export function MockAppProvider({ children }: { children: React.ReactNode }) {
@@ -233,6 +422,8 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
   const [liveSnapshots, setLiveSnapshots] = useState<Record<string, FirebaseDeviceSnapshot>>({});
   const [childSnapshotsByGateway, setChildSnapshotsByGateway] = useState<Record<string, Record<string, FirebaseChildSnapshot>>>({});
   const [networkByGateway, setNetworkByGateway] = useState<Record<string, Record<string, FirebaseNetworkNode>>>({});
+  const [sourceDevicesByNetwork, setSourceDevicesByNetwork] = useState<Record<string, NetworkDevice[]>>({});
+  const [topologyByNetwork, setTopologyByNetwork] = useState<Record<string, Record<string, TopologyNode>>>({});
   const [firebaseRtdbConnected, setFirebaseRtdbConnected] = useState(false);
 
   useEffect(() => {
@@ -320,6 +511,29 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
   }, [registeredDevices, liveSnapshots, firebaseRtdbConnected]);
 
   const gatewayIds = useMemo(() => inferGatewayIds(registeredDevices, ownLiveDevices), [registeredDevices, ownLiveDevices]);
+  const networkIds = useMemo(() => inferNetworkIds(registeredDevices, ownLiveDevices), [registeredDevices, ownLiveDevices]);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured() || !getFirebaseDb()) {
+      setSourceDevicesByNetwork({});
+      return;
+    }
+    const unsubs = networkIds.map((networkId) =>
+      subscribeNetworkDevices(networkId, (networkDevices) => {
+        setSourceDevicesByNetwork((prev) => ({ ...prev, [networkId]: networkDevices }));
+      }),
+    );
+    networkIds.forEach((networkId) => {
+      unsubs.push(
+        subscribeTopology(networkId, (_tree, flat) => {
+          setTopologyByNetwork((prev) => ({ ...prev, [networkId]: flat }));
+        }),
+      );
+    });
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [networkIds]);
 
   useEffect(() => {
     if (!isFirebaseConfigured() || !getFirebaseDb()) {
@@ -370,6 +584,28 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
     }
     return out.sort(deviceSort);
   }, [gatewayIds, childSnapshotsByGateway, networkByGateway, registeredDevices]);
+
+  const sourceNetworkDevices = useMemo(() => {
+    const out: AquaDevice[] = [];
+    for (const networkDevices of Object.values(sourceDevicesByNetwork)) {
+      for (const device of networkDevices) {
+        const reg = registeredDevices.find((r) => r.deviceId === device.id);
+        out.push(mapNetworkDeviceToAppDevice(device, reg?.name));
+      }
+    }
+    return out.sort(deviceSort);
+  }, [sourceDevicesByNetwork, registeredDevices]);
+
+  const sourceTopologyDevices = useMemo(() => {
+    const out: AquaDevice[] = [];
+    for (const [networkId, flat] of Object.entries(topologyByNetwork)) {
+      for (const node of Object.values(flat)) {
+        const reg = registeredDevices.find((r) => r.deviceId === node.device_id);
+        out.push(mapTopologyNodeToAppDevice(node, networkId, reg?.name));
+      }
+    }
+    return out.sort(deviceSort);
+  }, [topologyByNetwork, registeredDevices]);
 
   const setHasCompletedOnboarding = useCallback(async (v: boolean) => {
     setHasCompletedOnboardingState(v);
@@ -440,7 +676,10 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
     [liveSnapshots],
   );
 
-  const allLiveDevices = useMemo(() => [...ownLiveDevices, ...liveChildDevices].sort(deviceSort), [ownLiveDevices, liveChildDevices]);
+  const allLiveDevices = useMemo(
+    () => mergeLiveDevices(sourceNetworkDevices, liveChildDevices, ownLiveDevices, sourceTopologyDevices),
+    [sourceNetworkDevices, liveChildDevices, ownLiveDevices, sourceTopologyDevices],
+  );
 
   const getLiveDevice = useCallback(
     (deviceId: string): AquaDevice | null => allLiveDevices.find((d) => d.id === deviceId || d.sourceId === deviceId) ?? null,
