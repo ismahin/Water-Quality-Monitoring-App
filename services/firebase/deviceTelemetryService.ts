@@ -27,6 +27,11 @@ import {
   type UniversalRole,
 } from '../../types/universalDevice';
 import { getFirebaseDb } from './firebaseClient';
+import {
+  legacyGatewayChildrenPath,
+  legacyGatewayNetworkPath,
+  networkGatewayChildrenPath,
+} from './schemaV4Paths';
 
 const STALE_MS = 30_000;
 const CHILD_STALE_MS = 2 * 60_000;
@@ -58,6 +63,33 @@ function boolOr(...values: Array<boolean | undefined | null>): boolean | undefin
   return undefined;
 }
 
+function deviceSort(a: AquaDevice, b: AquaDevice): number {
+  const order = { gateway: 0, relay: 1, child: 2, single: 3 } as const;
+  return order[a.role] - order[b.role] || a.id.localeCompare(b.id);
+}
+
+function hasSensorTelemetry(latest: FirebaseChildLatest | FirebaseLatestReading | null | undefined): boolean {
+  return !!latest && [latest.ph, latest.tds, latest.temperature, latest.turbidity].some((value) => typeof value === 'number' && Number.isFinite(value));
+}
+
+export function childLifecycleLabel(input: {
+  pairStage?: string;
+  lifecycleState?: string;
+  pairConfirmed?: boolean;
+  telemetryReceived?: boolean;
+  latest?: FirebaseChildLatest | FirebaseLatestReading | null;
+}): string | undefined {
+  const stage = input.pairStage ?? input.lifecycleState;
+  if (stage === 'PAIR_ACCEPTED_WAITING_ACK') return 'Pairing accepted, waiting for child ACK';
+  if (stage === 'PAIR_SAVED_WAITING_TEST') return 'Paired, waiting for first data';
+  if (stage === 'ACTIVE') return 'Active';
+  if (stage === 'OFFLINE') return 'Offline';
+  if (stage === 'STALE') return 'Stale';
+  if (input.pairConfirmed === true && input.telemetryReceived !== true) return 'Paired, waiting for first data';
+  if (input.telemetryReceived !== true && !hasSensorTelemetry(input.latest)) return 'Waiting for first data';
+  return undefined;
+}
+
 function childIdFromKey(key: string, node: unknown): string {
   if (node && typeof node === 'object') {
     const o = node as Record<string, unknown>;
@@ -67,9 +99,7 @@ function childIdFromKey(key: string, node: unknown): string {
   return key;
 }
 
-function toChildSnapshot(key: string, snap: DataSnapshot): FirebaseChildSnapshot {
-  const raw = snap.val() as Record<string, unknown> | null;
-  const receivedAt = new Date().toISOString();
+function toChildSnapshotFromRaw(key: string, raw: Record<string, unknown> | null, receivedAt = new Date().toISOString()): FirebaseChildSnapshot {
   if (!raw || typeof raw !== 'object') return { latest: null, status: null, receivedAt };
 
   const nestedLatest = raw.latest && typeof raw.latest === 'object' ? (raw.latest as FirebaseChildLatest) : null;
@@ -91,6 +121,10 @@ function toChildSnapshot(key: string, snap: DataSnapshot): FirebaseChildSnapshot
     status: null,
     receivedAt,
   };
+}
+
+function toChildSnapshot(key: string, snap: DataSnapshot): FirebaseChildSnapshot {
+  return toChildSnapshotFromRaw(key, snap.val() as Record<string, unknown> | null);
 }
 
 function latestUploadIso(latest?: { last_upload_ms?: number } | null, status?: { last_upload_ms?: number } | null): string | undefined {
@@ -296,6 +330,18 @@ export function mapFirebaseChildToAppDevice(
   displayName?: string,
 ): ChildDevice | RelayDevice {
   const id = strOr(latest?.source_id, status?.source_id, status?.device_id, network?.source_id, network?.device_id, sourceId) ?? sourceId;
+  const telemetryReceived = boolOr(status?.telemetry_received, network?.telemetry_received) ?? hasSensorTelemetry(latest);
+  const pairConfirmed = boolOr(status?.pair_confirmed, network?.pair_confirmed);
+  const pairStage = strOr(status?.pair_stage, network?.pair_stage);
+  const lifecycleState = strOr(status?.lifecycle_state, network?.lifecycle_state);
+  const lifecycleLabel = childLifecycleLabel({
+    pairStage,
+    lifecycleState,
+    pairConfirmed,
+    telemetryReceived,
+    latest,
+  });
+  const pendingFirstTelemetry = telemetryReceived !== true && !hasSensorTelemetry(latest);
   const role = deriveUniversalRole({
     role: status?.role ?? latest?.role ?? network?.role,
     hardwareMode: 'NETWORK',
@@ -307,8 +353,16 @@ export function mapFirebaseChildToAppDevice(
   const parentFromRoute = strOr(status?.parent_id, latest?.parent_id, network?.parent_id, status?.forwarded_by, latest?.forwarded_by, network?.forwarded_by);
   const route = strOr(status?.route, latest?.route, network?.route);
   const parentId = parentFromRoute ?? (route ? route.split('>').slice(1, 2)[0] : gatewayId) ?? gatewayId;
-  const lastSeen = latestUploadIso(latest, status) ?? receivedAt;
-  const online = calculateOnlineStatus(status?.online, lastSeen, CHILD_STALE_MS);
+  const pairedAt = numOr(status?.pair_updated_ms, status?.paired_at_ms, network?.pair_updated_ms, network?.paired_at_ms);
+  const lastSeen = latestUploadIso(latest, status) ?? (pairedAt ? new Date(pairedAt).toISOString() : receivedAt);
+  const online =
+    lifecycleState === 'OFFLINE'
+      ? 'offline'
+      : lifecycleState === 'STALE'
+        ? 'warning'
+        : pendingFirstTelemetry
+          ? 'warning'
+          : calculateOnlineStatus(status?.online, lastSeen, CHILD_STALE_MS);
   const common = {
     id,
     name: displayName ?? id,
@@ -335,6 +389,14 @@ export function mapFirebaseChildToAppDevice(
     sourceId: id,
     route,
     forwardedBy: strOr(status?.forwarded_by, latest?.forwarded_by, network?.forwarded_by),
+    pairStage,
+    pairConfirmed,
+    telemetryReceived,
+    lifecycleState,
+    lifecycleLabel,
+    pendingFirstTelemetry,
+    hasSensorTelemetry: hasSensorTelemetry(latest),
+    firebaseMessage: strOr(status?.message, network?.message, status?.last_pair_event, network?.last_pair_event),
     relayEnabled: legacyRole === 'relay',
     gatewayUplinkEnabled: false,
     loraStatus: (status?.lora_ready === false || network?.lora_ready === false ? 'error' : 'ready') as LoRaStatus,
@@ -446,6 +508,141 @@ export function subscribeToDeviceChildren(
 }
 
 export const subscribeToGatewayChildren = subscribeToDeviceChildren;
+
+type MergedChildSnapshot = {
+  latest: FirebaseChildLatest | null;
+  status: FirebaseChildStatus | null;
+  network: FirebaseNetworkNode | null;
+  receivedAt: string;
+};
+
+function mergeChildMaps(
+  networkChildren: Record<string, FirebaseChildSnapshot>,
+  legacyChildren: Record<string, FirebaseChildSnapshot>,
+  legacyNetwork: Record<string, FirebaseNetworkNode>,
+): Record<string, MergedChildSnapshot> {
+  const out: Record<string, MergedChildSnapshot> = {};
+  const ids = new Set([...Object.keys(legacyNetwork), ...Object.keys(legacyChildren), ...Object.keys(networkChildren)]);
+  ids.forEach((id) => {
+    const v4 = networkChildren[id];
+    const legacy = legacyChildren[id];
+    const network = v4?.network ?? legacy?.network ?? legacyNetwork[id] ?? null;
+    out[id] = {
+      latest: v4?.latest ?? legacy?.latest ?? null,
+      status: v4?.status ?? legacy?.status ?? null,
+      network,
+      receivedAt: v4?.receivedAt ?? legacy?.receivedAt ?? new Date().toISOString(),
+    };
+  });
+  return out;
+}
+
+export function mapMergedChildToAppDevice(
+  childId: string,
+  mergedChild: MergedChildSnapshot,
+  gatewayId: string,
+  networkId?: string | null,
+): AquaDevice {
+  return mapFirebaseChildToAppDevice(
+    gatewayId,
+    childId,
+    mergedChild.latest,
+    mergedChild.status,
+    mergedChild.network ?? (networkId ? { network_id: networkId, root_gateway_id: gatewayId } : null),
+    mergedChild.receivedAt,
+  );
+}
+
+function subscribeToNetworkGatewayChildren(
+  networkId: string,
+  gatewayId: string,
+  callback: (children: Record<string, FirebaseChildSnapshot>) => void,
+  onError?: (error: Error) => void,
+): () => void {
+  const db = getFirebaseDb();
+  if (!db) return () => {};
+  return onValue(
+    ref(db, networkGatewayChildrenPath(networkId, gatewayId)),
+    (snap) => {
+      const out: Record<string, FirebaseChildSnapshot> = {};
+      snap.forEach((child) => {
+        const key = child.key ?? '';
+        if (key) out[key] = toChildSnapshot(key, child);
+      });
+      callback(out);
+    },
+    (error) => onError?.(error),
+  );
+}
+
+export function subscribeToGatewayChildrenMerged(
+  networkId: string | null | undefined,
+  gatewayId: string,
+  callback: (children: AquaDevice[]) => void,
+  onError?: (error: Error) => void,
+): () => void {
+  const db = getFirebaseDb();
+  if (!db) {
+    callback([]);
+    return () => {};
+  }
+
+  let networkChildren: Record<string, FirebaseChildSnapshot> = {};
+  let legacyChildren: Record<string, FirebaseChildSnapshot> = {};
+  let legacyNetwork: Record<string, FirebaseNetworkNode> = {};
+  const emit = () => {
+    const merged = mergeChildMaps(networkChildren, legacyChildren, legacyNetwork);
+    callback(
+      Object.entries(merged)
+        .map(([childId, child]) => mapMergedChildToAppDevice(childId, child, gatewayId, networkId))
+        .sort(deviceSort),
+    );
+  };
+
+  const unsubs: Array<() => void> = [];
+  if (networkId) {
+    unsubs.push(
+      subscribeToNetworkGatewayChildren(
+        networkId,
+        gatewayId,
+        (children) => {
+          networkChildren = children;
+          emit();
+        },
+        onError,
+      ),
+    );
+  }
+  unsubs.push(
+    onValue(
+      ref(db, legacyGatewayChildrenPath(gatewayId)),
+      (snap) => {
+        const out: Record<string, FirebaseChildSnapshot> = {};
+        snap.forEach((child) => {
+          const key = child.key ?? '';
+          if (key) out[key] = toChildSnapshot(key, child);
+        });
+        legacyChildren = out;
+        emit();
+      },
+      (error) => onError?.(error),
+    ),
+  );
+  unsubs.push(
+    onValue(
+      ref(db, legacyGatewayNetworkPath(gatewayId)),
+      (snap) => {
+        const raw = snap.val() as Record<string, FirebaseNetworkNode> | null;
+        legacyNetwork = raw && typeof raw === 'object' ? raw : {};
+        emit();
+      },
+      (error) => onError?.(error),
+    ),
+  );
+  return () => {
+    unsubs.forEach((unsub) => unsub());
+  };
+}
 
 export function subscribeToDeviceNetwork(
   gatewayId: string,

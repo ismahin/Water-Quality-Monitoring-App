@@ -75,10 +75,16 @@ export function normalizeStatus(raw: unknown): DeviceStatus | null {
     role: normalizeRole(o.role),
     parent_id: toStringValue(o.parent_id),
     root_gateway_id: toStringValue(o.root_gateway_id),
+    network_id: toStringValue(o.network_id),
     last_seen_ms: toNumber(o.last_seen_ms ?? o.last_upload_ms),
     battery: toNumber(o.battery),
     rssi: toNumber(o.rssi ?? o.last_lora_rssi),
     snr: toNumber(o.snr ?? o.last_lora_snr),
+    pair_stage: toStringValue(o.pair_stage),
+    pair_confirmed: typeof o.pair_confirmed === 'boolean' ? o.pair_confirmed : undefined,
+    telemetry_received: typeof o.telemetry_received === 'boolean' ? o.telemetry_received : undefined,
+    lifecycle_state: toStringValue(o.lifecycle_state),
+    message: toStringValue(o.message),
   };
 }
 

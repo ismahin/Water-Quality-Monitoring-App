@@ -17,12 +17,29 @@ function normalizeInfoNotification(notification: PairingNotification, fallbackNa
   return normalizeDeviceInfo(raw, fallbackDeviceIdFromName(fallbackName));
 }
 
+function normalizeDecodedInfo(decoded: string | undefined, fallbackName?: string): PairingBleInfo | null {
+  if (!decoded) return null;
+  try {
+    const value = JSON.parse(decoded) as PairingNotification;
+    return normalizeInfoNotification(value, fallbackName);
+  } catch {
+    return null;
+  }
+}
+
 function isParentsNotification(notification: PairingNotification): notification is PairingNotification & { items: PairingParent[] } {
   return notification.type === 'parents' && Array.isArray(notification.items);
 }
 
 export function usePairingBle() {
   const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectedDeviceNameRef = useRef<string | undefined>(undefined);
+  const lastNotificationKeyRef = useRef('');
+  const lastParentsKeyRef = useRef('');
+  const lastDebugPatchRef = useRef('');
+  const lastDebugPatchAtRef = useRef(0);
+  const devicesRef = useRef<Map<string, PairingBleDevice>>(new Map());
+  const devicesFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [devices, setDevices] = useState<PairingBleDevice[]>([]);
   const [connectedDevice, setConnectedDevice] = useState<{ id: string; name: string } | null>(null);
   const [info, setInfo] = useState<PairingBleInfo | null>(null);
@@ -41,20 +58,42 @@ export function usePairingBle() {
 
   useEffect(() => {
     unifiedDeviceBleService.setDebugListener((patch) => {
+      const now = Date.now();
+      const patchKey = JSON.stringify(patch);
+      if (patchKey === lastDebugPatchRef.current && now - lastDebugPatchAtRef.current < 1000) return;
+      lastDebugPatchRef.current = patchKey;
+      lastDebugPatchAtRef.current = now;
       setDebug((prev) => ({ ...prev, ...patch }));
+      const infoNotification = normalizeDecodedInfo(patch.lastDecodedResponse, connectedDeviceNameRef.current);
+      if (infoNotification) {
+        console.log('[BLE INFO] Normalized device info from decoded fallback:', JSON.stringify(infoNotification));
+        setInfo(infoNotification);
+        setDebug((prev) => ({
+          ...prev,
+          lastInfoJson: patch.lastDecodedResponse,
+          rawInfoLoraReady: String(infoNotification.lora_ready),
+          normalizedInfoLoraReady: String(infoNotification.loraReady),
+        }));
+      }
     });
     return () => {
       unifiedDeviceBleService.setDebugListener(null);
       if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+      if (devicesFlushTimerRef.current) clearTimeout(devicesFlushTimerRef.current);
       unifiedDeviceBleService.stopScan();
       void unifiedDeviceBleService.disconnect();
     };
   }, []);
 
   const handleNotification = useCallback((notification: PairingNotification) => {
-    setNotifications((prev) => [notification, ...prev].slice(0, 20));
-    const infoNotification = normalizeInfoNotification(notification, connectedDevice?.name);
+    const notificationKey = JSON.stringify(notification);
+    if (notificationKey !== lastNotificationKeyRef.current) {
+      lastNotificationKeyRef.current = notificationKey;
+      setNotifications((prev) => [notification, ...prev].slice(0, 30));
+    }
+    const infoNotification = normalizeInfoNotification(notification, connectedDeviceNameRef.current);
     if (infoNotification) {
+      console.log('[BLE INFO] Normalized device info:', JSON.stringify(infoNotification));
       setInfo(infoNotification);
       setDebug((prev) => ({
         ...prev,
@@ -64,7 +103,17 @@ export function usePairingBle() {
       }));
     }
     if (isParentsNotification(notification)) {
-      setDebug((prev) => ({ ...prev, lastParentsJson: JSON.stringify(notification) }));
+      const parentsKey = JSON.stringify(notification.items.map((parent) => ({
+        id: parent.id,
+        role: parent.role,
+        network_id: parent.network_id,
+        root_gateway_id: parent.root_gateway_id,
+        rssi: parent.rssi,
+        snr: parent.snr,
+      })));
+      if (parentsKey === lastParentsKeyRef.current) return;
+      lastParentsKeyRef.current = parentsKey;
+      setDebug((prev) => ({ ...prev, lastParentsJson: notificationKey }));
       setParents((prev) => {
         const map = new Map(prev.map((parent) => [parent.id, parent]));
         notification.items.forEach((parent) => {
@@ -74,11 +123,12 @@ export function usePairingBle() {
         return Array.from(map.values()).sort((a, b) => (b.rssi ?? -120) - (a.rssi ?? -120));
       });
     }
-  }, [connectedDevice?.name]);
+  }, []);
 
   const startScan = useCallback(async () => {
     setError(null);
     setDevices([]);
+    devicesRef.current = new Map();
     setScanStats({
       totalAdvertisements: 0,
       namedAdvertisements: 0,
@@ -89,12 +139,16 @@ export function usePairingBle() {
     setScanning(true);
     await unifiedDeviceBleService.scanWqmPairDevices(
       (device) => {
-        setDevices((prev) => {
-          const map = new Map(prev.map((item) => [item.id, item]));
-          const old = map.get(device.id);
-          if (!old || device.rssi > old.rssi) map.set(device.id, device);
-          return Array.from(map.values()).sort((a, b) => b.rssi - a.rssi);
-        });
+        const old = devicesRef.current.get(device.id);
+        if (!old || Math.abs(device.rssi - old.rssi) >= 4 || old.name !== device.name) {
+          devicesRef.current.set(device.id, !old || device.rssi > old.rssi ? device : { ...device, rssi: old.rssi });
+        }
+        if (!devicesFlushTimerRef.current) {
+          devicesFlushTimerRef.current = setTimeout(() => {
+            devicesFlushTimerRef.current = null;
+            setDevices(Array.from(devicesRef.current.values()).sort((a, b) => b.rssi - a.rssi));
+          }, 250);
+        }
       },
       (message) => {
         setError(message);
@@ -105,6 +159,11 @@ export function usePairingBle() {
     scanTimerRef.current = setTimeout(() => {
       unifiedDeviceBleService.stopScan();
       setScanning(false);
+      if (devicesFlushTimerRef.current) {
+        clearTimeout(devicesFlushTimerRef.current);
+        devicesFlushTimerRef.current = null;
+      }
+      setDevices(Array.from(devicesRef.current.values()).sort((a, b) => b.rssi - a.rssi));
       scanTimerRef.current = null;
     }, 7000);
   }, []);
@@ -125,8 +184,15 @@ export function usePairingBle() {
       try {
         stopScan();
         const connected = await unifiedDeviceBleService.connect(id);
+        connectedDeviceNameRef.current = connected.name;
         setConnectedDevice(connected);
-        unifiedDeviceBleService.subscribeNotifications(handleNotification, setError);
+        unifiedDeviceBleService.subscribeNotifications(handleNotification, (message) => {
+          setError(message);
+          if (message.toLowerCase().includes('disconnect') || message.toLowerCase().includes('not connected')) {
+            connectedDeviceNameRef.current = undefined;
+            setConnectedDevice(null);
+          }
+        });
         await new Promise((resolve) => setTimeout(resolve, 500));
         await unifiedDeviceBleService.getInfo();
       } catch (e) {
@@ -140,9 +206,15 @@ export function usePairingBle() {
 
   const disconnect = useCallback(async () => {
     await unifiedDeviceBleService.disconnect();
+    connectedDeviceNameRef.current = undefined;
     setConnectedDevice(null);
     setInfo(null);
+    setParents([]);
     setDebug({});
+  }, []);
+
+  const clearParents = useCallback(() => {
+    setParents([]);
   }, []);
 
   const actions = useMemo(
@@ -194,6 +266,7 @@ export function usePairingBle() {
     stopScan,
     connect,
     disconnect,
+    clearParents,
     actions,
   };
 }

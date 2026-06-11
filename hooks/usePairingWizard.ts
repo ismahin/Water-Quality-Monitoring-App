@@ -41,8 +41,8 @@ export function usePairingWizard() {
 
   useEffect(() => {
     if (!ble.info) return;
-    setDeviceId(ble.info.device_id || deviceId);
-    setNetworkId(ble.info.network_id || networkId);
+    setDeviceId(ble.info.deviceId || deviceId);
+    setNetworkId(ble.info.networkId || networkId);
     setProgress((prev) => ({ ...prev, bleConnected: true, infoLoaded: true }));
   }, [ble.info]);
 
@@ -63,6 +63,20 @@ export function usePairingWizard() {
         pairSaved: ok,
         error: ok ? undefined : latest.message ?? 'Parent rejected pairing.',
       }));
+      if (ok) setStep('done');
+    }
+    if (latest.type === 'cmd_ack') {
+      const stage = typeof latest.stage === 'string' ? latest.stage : '';
+      if (latest.ok === true && stage === 'PAIR_ACCEPTED_WAITING_ACK') {
+        setProgress((prev) => ({ ...prev, pairStarted: true, parentAccepted: true }));
+      }
+      if (latest.ok === true && ['PAIR_SAVED_WAITING_TEST', 'ACTIVE', 'saved', 'server_test'].includes(stage)) {
+        setProgress((prev) => ({ ...prev, pairStarted: true, parentAccepted: true, pairSaved: true }));
+        setStep('done');
+      }
+      if (latest.ok === false) {
+        setProgress((prev) => ({ ...prev, error: latest.message ?? `Command failed at ${stage || 'unknown stage'}.` }));
+      }
     }
     if (latest.type === 'server_test' && typeof latest.test_id === 'string') {
       setTestId(latest.test_id);

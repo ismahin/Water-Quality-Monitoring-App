@@ -559,10 +559,15 @@ export default function DeviceDetailScreen() {
       >
         <Card.Content style={{ gap: 8 }}>
           <Text style={{ fontWeight: '900', color: colors.navy, fontSize: 16 }}>Sensors</Text>
-          <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>pH {device.sensors.ph.toFixed(2)}</Text>
-          <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>TDS {Math.round(device.sensors.tdsPpm)} ppm</Text>
-          <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Temp {device.sensors.temperatureC.toFixed(1)} °C</Text>
-          <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Turbidity {Math.round(device.sensors.turbidityNtu)} NTU</Text>
+          {device.pendingFirstTelemetry ? (
+            <Text style={{ color: colors.warning, fontWeight: '700' }}>
+              {device.lifecycleLabel ?? 'Waiting for first data'}
+            </Text>
+          ) : null}
+          <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>pH {device.pendingFirstTelemetry ? '--' : device.sensors.ph.toFixed(2)}</Text>
+          <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>TDS {device.pendingFirstTelemetry ? '--' : `${Math.round(device.sensors.tdsPpm)} ppm`}</Text>
+          <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Temp {device.pendingFirstTelemetry ? '--' : `${device.sensors.temperatureC.toFixed(1)} C`}</Text>
+          <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Turbidity {device.pendingFirstTelemetry ? '--' : `${Math.round(device.sensors.turbidityNtu)} NTU`}</Text>
           {isLive && liveW?.sensorStatus ? (
             <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Sensor status: {liveW.sensorStatus}</Text>
           ) : null}

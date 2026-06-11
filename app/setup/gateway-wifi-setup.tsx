@@ -1,6 +1,6 @@
 import { Bluetooth, CheckCircle2, Cpu, Lock, Network, Radio, Router, ShieldCheck, Wifi, WifiOff } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Card, Dialog, Portal, ProgressBar, TextInput } from 'react-native-paper';
 import { AppHeader } from '../../components/AppHeader';
@@ -143,15 +143,21 @@ export default function GatewayWifiSetupScreen() {
 
   useEffect(() => {
     if (!ble.info) return;
-    setDeviceId(ble.info.device_id);
-    setNetworkId(ble.info.network_id || DEFAULT_NETWORK_ID);
+    setDeviceId(ble.info.deviceId);
+    setNetworkId(ble.info.networkId || DEFAULT_NETWORK_ID);
     setInfoTimedOut(false);
   }, [ble.info]);
 
   const requestInfo = async () => {
     setInfoTimedOut(false);
     setInfoRequestCount((prev) => prev + 1);
-    await ble.actions.getInfo();
+    try {
+      await ble.actions.getInfo();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not request device info.';
+      console.warn('[BLE INFO] Request failed:', message);
+      if (ble.connectedDevice) ble.setError(message);
+    }
   };
 
   useEffect(() => {
@@ -177,14 +183,29 @@ export default function GatewayWifiSetupScreen() {
     };
   }, [ble.connectedDevice, ble.info]);
 
-  useEffect(() => {
-    if (setupStep !== 2 || !ble.info || wifiScanRequested || wifiScanDone) return;
+  const startWifiScan = useCallback(async () => {
+    if (!ble.connectedDevice) {
+      setWifiError('BLE device is disconnected. Go back and reconnect the device.');
+      setWifiScanning(false);
+      return;
+    }
+    console.log('[WIFI UI] Sending Wi-Fi scan command: {"cmd":"scan_wifi"}');
     setWifiScanRequested(true);
     setWifiScanning(true);
     setWifiScanUnavailable(false);
     setWifiError(null);
-    void ble.actions.scanWifi(false);
-  }, [ble.actions, ble.info, setupStep, wifiScanDone, wifiScanRequested]);
+    try {
+      await ble.actions.scanWifi(false);
+    } catch (error) {
+      setWifiScanning(false);
+      setWifiError(error instanceof Error ? error.message : 'Could not send Wi-Fi scan command.');
+    }
+  }, [ble.actions, ble.connectedDevice]);
+
+  useEffect(() => {
+    if (setupStep !== 2 || wifiScanRequested || wifiScanDone) return;
+    void startWifiScan();
+  }, [setupStep, startWifiScan, wifiScanDone, wifiScanRequested]);
 
   useEffect(() => {
     if (!latestWifiScanNotification || latestWifiScanNotification.type !== 'wifi_scan') return;
@@ -244,8 +265,8 @@ export default function GatewayWifiSetupScreen() {
       setWifiStatusConfirmed(false);
       return;
     }
-    if (ble.info?.wifi_connected) setWifiStatusConfirmed(true);
-  }, [ble.info?.wifi_connected, wifiConnected]);
+    if (ble.info?.wifiConnected) setWifiStatusConfirmed(true);
+  }, [ble.info?.wifiConnected, wifiConnected]);
 
   useEffect(() => {
     if (!wifiConnected || wifiStatusConfirmed || !ble.connectedDevice) return;
@@ -290,18 +311,10 @@ export default function GatewayWifiSetupScreen() {
     setWifiError(null);
     setWifiNetworks([]);
     setHandledWifiScanKey('');
-    setWifiScanRequested(true);
+    setWifiScanRequested(false);
     setWifiScanDone(false);
     setWifiScanUnavailable(false);
-    setWifiScanning(true);
-    if (!ble.info) {
-      setWifiScanning(false);
-      setWifiScanRequested(false);
-      await requestInfo();
-      setWifiError('Device info is still loading. Wi-Fi scan will start after info is received.');
-      return;
-    }
-    await ble.actions.scanWifi(false);
+    await startWifiScan();
   };
 
   const sendWifi = async () => {
@@ -476,6 +489,12 @@ export default function GatewayWifiSetupScreen() {
                 {!ble.info ? (
                   <View style={{ gap: spacing.sm }}>
                     <Text style={{ color: colors.mutedStrong }}>Loading device information...</Text>
+                    {fallbackDeviceId ? (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
+                        <InfoChip icon={<Cpu size={14} color={colors.primary} />} label="Device ID" value={fallbackDeviceId} />
+                        <InfoChip icon={<Network size={14} color={colors.primary} />} label="Network" value={networkId || DEFAULT_NETWORK_ID} />
+                      </View>
+                    ) : null}
                     {infoTimedOut ? (
                       <>
                         <Text style={{ color: colors.warning, fontWeight: '800' }}>Device info was not received yet.</Text>
@@ -485,21 +504,21 @@ export default function GatewayWifiSetupScreen() {
                   </View>
                 ) : (
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-                    <InfoChip icon={<Cpu size={14} color={colors.primary} />} label="Device ID" value={ble.info.device_id} />
-                    <InfoChip icon={<Network size={14} color={colors.primary} />} label="Network" value={ble.info.network_id || DEFAULT_NETWORK_ID} />
+                    <InfoChip icon={<Cpu size={14} color={colors.primary} />} label="Device ID" value={ble.info.deviceId} />
+                    <InfoChip icon={<Network size={14} color={colors.primary} />} label="Network" value={ble.info.networkId || DEFAULT_NETWORK_ID} />
                     <InfoChip icon={<Router size={14} color={colors.primary} />} label="Role" value={ble.info.role} />
-                    <InfoChip icon={<ShieldCheck size={14} color={colors.primary} />} label="Mode" value={ble.info.switch_mode} />
+                    <InfoChip icon={<ShieldCheck size={14} color={colors.primary} />} label="Mode" value={ble.info.switchMode} />
                     <InfoChip
-                      icon={<Radio size={14} color={ble.info.lora_ready ? colors.success : colors.warning} />}
+                      icon={<Radio size={14} color={ble.info.loraReady ? colors.success : colors.warning} />}
                       label="LoRa"
-                      value={ble.info.lora_ready ? 'Ready' : 'Not ready'}
-                      tone={ble.info.lora_ready ? colors.success : colors.warning}
+                      value={ble.info.loraReady ? 'Ready' : 'Not ready'}
+                      tone={ble.info.loraReady ? colors.success : colors.warning}
                     />
                     <InfoChip
-                      icon={ble.info.wifi_connected ? <Wifi size={14} color={colors.success} /> : <WifiOff size={14} color={colors.mutedStrong} />}
+                      icon={ble.info.wifiConnected ? <Wifi size={14} color={colors.success} /> : <WifiOff size={14} color={colors.mutedStrong} />}
                       label="Wi-Fi"
-                      value={ble.info.wifi_connected ? 'Connected' : 'Not connected'}
-                      tone={ble.info.wifi_connected ? colors.success : colors.mutedStrong}
+                      value={ble.info.wifiConnected ? 'Connected' : 'Not connected'}
+                      tone={ble.info.wifiConnected ? colors.success : colors.mutedStrong}
                     />
                   </View>
                 )}

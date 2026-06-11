@@ -25,8 +25,8 @@ export default function PairingConfigScreen() {
 
   useEffect(() => {
     if (!ble.info) return;
-    setDeviceId(ble.info.device_id);
-    setNetworkId(ble.info.network_id || 'POND_001');
+    setDeviceId(ble.info.deviceId);
+    setNetworkId(ble.info.networkId || 'POND_001');
   }, [ble.info]);
 
   return (
@@ -102,15 +102,15 @@ export default function PairingConfigScreen() {
           <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, ...shadows.soft }}>
             <Card.Content style={{ gap: spacing.sm }}>
               <Text style={{ color: colors.navy, fontWeight: '900', fontSize: 18 }}>Current configuration</Text>
-              <Text selectable style={{ color: colors.mutedStrong }}>Device ID: {ble.info?.device_id ?? '-'}</Text>
-              <Text selectable style={{ color: colors.mutedStrong }}>Network ID: {ble.info?.network_id ?? '-'}</Text>
+              <Text selectable style={{ color: colors.mutedStrong }}>Device ID: {ble.info?.deviceId ?? '-'}</Text>
+              <Text selectable style={{ color: colors.mutedStrong }}>Network ID: {ble.info?.networkId ?? '-'}</Text>
               <Text style={{ color: colors.mutedStrong }}>Role: {ble.info?.role ?? '-'}</Text>
-              <Text selectable style={{ color: colors.mutedStrong }}>Parent ID: {ble.info?.parent_id || '-'}</Text>
-              <Text selectable style={{ color: colors.mutedStrong }}>Root Gateway ID: {ble.info?.root_gateway_id || '-'}</Text>
-              <Text style={{ color: colors.mutedStrong }}>Switch mode: {ble.info?.switch_mode ?? '-'}</Text>
+              <Text selectable style={{ color: colors.mutedStrong }}>Parent ID: {ble.info?.parentId || '-'}</Text>
+              <Text selectable style={{ color: colors.mutedStrong }}>Root Gateway ID: {ble.info?.rootGatewayId || '-'}</Text>
+              <Text style={{ color: colors.mutedStrong }}>Switch mode: {ble.info?.switchMode ?? '-'}</Text>
               <Text style={{ color: colors.mutedStrong }}>Paired: {ble.info?.paired ? 'Yes' : 'No'}</Text>
-              <Text style={{ color: colors.mutedStrong }}>Wi-Fi connected: {ble.info?.wifi_connected ? 'Yes' : 'No'}</Text>
-              <Text style={{ color: colors.mutedStrong }}>LoRa ready: {ble.info?.lora_ready ? 'Yes' : 'No'}</Text>
+              <Text style={{ color: colors.mutedStrong }}>Wi-Fi connected: {ble.info?.wifiConnected ? 'Yes' : 'No'}</Text>
+              <Text style={{ color: colors.mutedStrong }}>LoRa ready: {ble.info?.loraReady ? 'Yes' : 'No'}</Text>
             </Card.Content>
           </Card>
 

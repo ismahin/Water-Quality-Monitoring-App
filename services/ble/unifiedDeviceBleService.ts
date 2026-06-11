@@ -1,5 +1,5 @@
 import type { Device, Subscription } from 'react-native-ble-plx';
-import type { BleDebugState, PairingBleDevice, PairingCommand, PairingNotification, PairingParent } from '../../types/pairing';
+import type { BleDebugState, PairingBleDevice, PairingCommand, PairingCommandEnvelope, PairingNotification, PairingParent } from '../../types/pairing';
 import type { BaseBleDebugPatch, BaseBleScanStats } from './baseBleService';
 import { connectToDevice, disconnectDevice, monitorJson, scanDevices, stopScan, writeJson } from './baseBleService';
 import { MOCK_BLE_CONFIG } from './bleConfigService';
@@ -25,6 +25,8 @@ export class UnifiedDeviceBleService {
   private notificationSub: Subscription | null = null;
   private mockCallback: ((notification: PairingNotification) => void) | null = null;
   private debugCallback: ((patch: Partial<BleDebugState>) => void) | null = null;
+  private envelopeCounter = 0;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   setDebugListener(callback: ((patch: Partial<BleDebugState>) => void) | null): void {
     this.debugCallback = callback;
@@ -73,6 +75,7 @@ export class UnifiedDeviceBleService {
     this.mockCallback = null;
     const device = this.currentDevice;
     this.currentDevice = null;
+    this.writeQueue = Promise.resolve();
     this.stopScan();
     await disconnectDevice(device);
   }
@@ -100,7 +103,7 @@ export class UnifiedDeviceBleService {
     };
   }
 
-  async writeCommand(command: PairingCommand): Promise<void> {
+  async writeCommand(command: PairingCommand, options?: { repeatWithoutResponseAfterSuccess?: boolean; preferWithoutResponse?: boolean }): Promise<void> {
     const commandJson = JSON.stringify(command);
     this.emitDebug({ lastCommand: commandJson });
     if (MOCK_BLE_CONFIG) {
@@ -109,7 +112,33 @@ export class UnifiedDeviceBleService {
       return;
     }
     if (!this.currentDevice) throw new Error('No WQMPAIR device is connected.');
-    await writeJson(this.currentDevice, UNIFIED_SERVICE_UUID, UNIFIED_RX_UUID, command);
+    const device = this.currentDevice;
+    const writeTask = this.writeQueue.then(() => writeJson(device, UNIFIED_SERVICE_UUID, UNIFIED_RX_UUID, command, options));
+    this.writeQueue = writeTask.catch(() => undefined);
+    await writeTask;
+  }
+
+  async writeCommandEnvelope(cmd: string, args?: Record<string, unknown>): Promise<string> {
+    this.envelopeCounter += 1;
+    const command: PairingCommandEnvelope = {
+      v: 2,
+      cmd_id: `app_${Date.now()}_${String(this.envelopeCounter).padStart(3, '0')}`,
+      cmd,
+      ...(args ? { args } : {}),
+    };
+    const commandJson = JSON.stringify(command);
+    this.emitDebug({ lastCommand: commandJson });
+    if (MOCK_BLE_CONFIG) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      this.mockCallback?.({ type: 'cmd_ack', cmd_id: command.cmd_id, ok: true, stage: cmd === 'pair' ? 'PAIR_SAVED_WAITING_TEST' : 'ACTIVE' });
+      return command.cmd_id;
+    }
+    if (!this.currentDevice) throw new Error('No WQMPAIR device is connected.');
+    const device = this.currentDevice;
+    const writeTask = this.writeQueue.then(() => writeJson(device, UNIFIED_SERVICE_UUID, UNIFIED_RX_UUID, command));
+    this.writeQueue = writeTask.catch(() => undefined);
+    await writeTask;
+    return command.cmd_id;
   }
 
   private async inspectCharacteristics(): Promise<void> {
@@ -138,7 +167,7 @@ export class UnifiedDeviceBleService {
   }
 
   getInfo(): Promise<void> {
-    return this.writeCommand({ cmd: 'info' });
+    return this.writeCommand({ cmd: 'info' }, { repeatWithoutResponseAfterSuccess: true });
   }
 
   setId(deviceId: string, networkId: string): Promise<void> {
@@ -146,14 +175,17 @@ export class UnifiedDeviceBleService {
   }
 
   setWifi(ssid: string, password: string, gateway = true): Promise<void> {
-    return this.writeCommand({ cmd: 'set_wifi', ssid, password, gateway });
+    return this.writeCommand({ cmd: 'set_wifi', ssid, password, pass: password, gateway });
   }
 
   scanWifi(useAlias = false, maxResults?: number): Promise<void> {
-    return this.writeCommand({
-      cmd: useAlias ? 'wifi_scan' : 'scan_wifi',
-      ...(typeof maxResults === 'number' ? { max_results: maxResults } : {}),
-    });
+    return this.writeCommand(
+      {
+        cmd: useAlias ? 'wifi_scan' : 'scan_wifi',
+        ...(typeof maxResults === 'number' ? { max_results: maxResults } : {}),
+      },
+      { repeatWithoutResponseAfterSuccess: true },
+    );
   }
 
   scanParents(): Promise<void> {
@@ -161,7 +193,7 @@ export class UnifiedDeviceBleService {
   }
 
   pairNode(parentId: string, role: 'CHILD' | 'RELAY', networkId: string): Promise<void> {
-    return this.writeCommand({ cmd: 'pair', parent_id: parentId, role, network_id: networkId });
+    return this.writeCommand({ cmd: 'pair', parent_id: parentId, role, network_id: networkId }, { preferWithoutResponse: true });
   }
 
   resetPair(): Promise<void> {

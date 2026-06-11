@@ -30,6 +30,13 @@ export interface LiveFirebaseDeviceFields {
   removeRequested?: boolean;
   reprovisionRequired?: boolean;
   firebaseMessage?: string;
+  pairStage?: string;
+  pairConfirmed?: boolean;
+  telemetryReceived?: boolean;
+  lifecycleState?: string;
+  lifecycleLabel?: string;
+  pendingFirstTelemetry?: boolean;
+  hasSensorTelemetry?: boolean;
   loraEnabled?: boolean;
   loraStatus?: LoRaStatus;
   loraReady?: boolean;

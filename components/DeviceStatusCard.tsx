@@ -37,6 +37,8 @@ function firebaseModeLabel(device: AquaDevice): string {
 }
 
 function wifiDeviceTagline(device: AquaDevice): string | null {
+  if (device.lifecycleLabel) return device.lifecycleLabel;
+  if (device.pendingFirstTelemetry) return 'Waiting for first data';
   if (!usesWifiUi(device)) return null;
   const d = device as SingleDevice | GatewayDevice;
   if (d.role === 'gateway') {
@@ -123,7 +125,7 @@ export function DeviceStatusCard({ device, parentName, onPress }: Props) {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Radio size={17} color={colors.secondary} />
               <Text style={{ color: colors.navy, fontWeight: '700', flex: 1 }} numberOfLines={1}>
-                LoRa to {parentName ?? 'parent'}
+                {device.lifecycleLabel ?? (device.pendingFirstTelemetry ? 'Waiting for first data' : `LoRa to ${parentName ?? 'parent'}`)}
               </Text>
             </View>
           ) : null}

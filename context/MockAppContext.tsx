@@ -13,7 +13,7 @@ import type { AquaDevice, ChildDevice, DeviceOnlineStatus, GatewayDevice, RelayD
 import type { NetworkDevice, TopologyNode } from '../types/networkDevice';
 import type { Pond } from '../types/pond';
 import type { SensorThresholds } from '../types/sensor';
-import type { FirebaseChildSnapshot, FirebaseDeviceSnapshot, FirebaseNetworkNode } from '../types/firebase';
+import type { FirebaseDeviceSnapshot, FirebaseNetworkNode } from '../types/firebase';
 import type { RegisteredDevice, UniversalRole } from '../types/universalDevice';
 import { isFirebaseConfigured } from '../constants/env';
 import {
@@ -25,11 +25,10 @@ import {
 } from '../constants/mockData';
 import { getFirebaseDb } from '../services/firebase/firebaseClient';
 import {
-  mapFirebaseChildToAppDevice,
+  childLifecycleLabel,
   mapFirebaseOwnDeviceToAppDevice,
-  subscribeToDeviceChildren,
-  subscribeToDeviceNetwork,
   subscribeToOwnDevice,
+  subscribeToGatewayChildrenMerged,
 } from '../services/firebase/deviceTelemetryService';
 import { subscribeNetworkDevices } from '../services/firebase/deviceService';
 import { subscribeTopology } from '../services/firebase/topologyService';
@@ -213,6 +212,11 @@ function dateFromMaybeMs(value?: number): string {
   return new Date(timestamp).toISOString();
 }
 
+function hasNetworkSensorTelemetry(device: NetworkDevice): boolean {
+  const latest = device.latest;
+  return !!latest && [latest.ph, latest.tds, latest.temperature, latest.turbidity].some((value) => typeof value === 'number' && Number.isFinite(value));
+}
+
 function mapNetworkDeviceToAppDevice(device: NetworkDevice, displayName?: string): AquaDevice {
   const latest = device.latest;
   const status = device.status;
@@ -225,8 +229,26 @@ function mapNetworkDeviceToAppDevice(device: NetworkDevice, displayName?: string
         : 'single';
   const parentId = status?.parent_id ?? latest?.parent_id ?? '';
   const rootGatewayId = status?.root_gateway_id ?? latest?.root_gateway_id ?? (role === 'gateway' ? device.id : undefined);
+  const telemetryReceived = status?.telemetry_received ?? hasNetworkSensorTelemetry(device);
+  const lifecycleLabel = childLifecycleLabel({
+    pairStage: status?.pair_stage,
+    lifecycleState: status?.lifecycle_state,
+    pairConfirmed: status?.pair_confirmed,
+    telemetryReceived,
+    latest: latest ? { ph: latest.ph, tds: latest.tds, temperature: latest.temperature, turbidity: latest.turbidity } : null,
+  });
+  const pendingFirstTelemetry = role !== 'gateway' && role !== 'single' && telemetryReceived !== true && !hasNetworkSensorTelemetry(device);
   const lastSeenAt = dateFromMaybeMs(device.lastSeenMs);
-  const online: DeviceOnlineStatus = device.online === true ? 'online' : device.online === false ? 'offline' : 'warning';
+  const online: DeviceOnlineStatus =
+    status?.lifecycle_state === 'OFFLINE'
+      ? 'offline'
+      : status?.lifecycle_state === 'STALE' || pendingFirstTelemetry
+        ? 'warning'
+        : device.online === true
+          ? 'online'
+          : device.online === false
+            ? 'offline'
+            : 'warning';
   const common = {
     id: device.id,
     name: displayName ?? device.id,
@@ -249,6 +271,14 @@ function mapNetworkDeviceToAppDevice(device: NetworkDevice, displayName?: string
     parentId,
     rootGatewayId,
     gatewayId: rootGatewayId,
+    pairStage: status?.pair_stage,
+    pairConfirmed: status?.pair_confirmed,
+    telemetryReceived,
+    lifecycleState: status?.lifecycle_state,
+    lifecycleLabel,
+    pendingFirstTelemetry,
+    hasSensorTelemetry: hasNetworkSensorTelemetry(device),
+    firebaseMessage: status?.message,
     isLive: true,
     isDemo: false,
   };
@@ -307,8 +337,29 @@ function mapTopologyNodeToAppDevice(node: TopologyNode, networkId: string, displ
       ? 'relay'
       : 'child';
   const rootGatewayId = node.root_gateway_id || (role === 'gateway' ? node.device_id : undefined);
+  const nodePairStage = typeof node.pair_stage === 'string' ? node.pair_stage : undefined;
+  const nodeLifecycleState = typeof node.lifecycle_state === 'string' ? node.lifecycle_state : undefined;
+  const nodePairConfirmed = typeof node.pair_confirmed === 'boolean' ? node.pair_confirmed : undefined;
+  const telemetryReceived = node.telemetry_received === true;
+  const lifecycleLabel = childLifecycleLabel({
+    pairStage: nodePairStage,
+    lifecycleState: nodeLifecycleState,
+    pairConfirmed: nodePairConfirmed,
+    telemetryReceived,
+    latest: null,
+  });
+  const pendingFirstTelemetry = role !== 'gateway' && telemetryReceived !== true;
   const lastSeenAt = dateFromMaybeMs(node.last_seen_ms);
-  const online: DeviceOnlineStatus = node.online === true ? 'online' : node.online === false ? 'offline' : 'warning';
+  const online: DeviceOnlineStatus =
+    nodeLifecycleState === 'OFFLINE'
+      ? 'offline'
+      : nodeLifecycleState === 'STALE' || pendingFirstTelemetry
+        ? 'warning'
+        : node.online === true
+          ? 'online'
+          : node.online === false
+            ? 'offline'
+            : 'warning';
   const common = {
     id: node.device_id,
     name: displayName ?? node.device_id,
@@ -327,6 +378,14 @@ function mapTopologyNodeToAppDevice(node: TopologyNode, networkId: string, displ
     rootGatewayId,
     gatewayId: rootGatewayId,
     route: node.route,
+    pairStage: nodePairStage,
+    pairConfirmed: nodePairConfirmed,
+    telemetryReceived,
+    lifecycleState: nodeLifecycleState,
+    lifecycleLabel,
+    pendingFirstTelemetry,
+    hasSensorTelemetry: false,
+    firebaseMessage: typeof node.message === 'string' ? node.message : undefined,
     isLive: true,
     isDemo: false,
   };
@@ -420,7 +479,7 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
   const [registeredDevices, setRegisteredDevices] = useState<RegisteredDevice[]>([]);
   const [hydratedRegistered, setHydratedRegistered] = useState(false);
   const [liveSnapshots, setLiveSnapshots] = useState<Record<string, FirebaseDeviceSnapshot>>({});
-  const [childSnapshotsByGateway, setChildSnapshotsByGateway] = useState<Record<string, Record<string, FirebaseChildSnapshot>>>({});
+  const [mergedChildrenByGateway, setMergedChildrenByGateway] = useState<Record<string, AquaDevice[]>>({});
   const [networkByGateway, setNetworkByGateway] = useState<Record<string, Record<string, FirebaseNetworkNode>>>({});
   const [sourceDevicesByNetwork, setSourceDevicesByNetwork] = useState<Record<string, NetworkDevice[]>>({});
   const [topologyByNetwork, setTopologyByNetwork] = useState<Record<string, Record<string, TopologyNode>>>({});
@@ -537,53 +596,31 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isFirebaseConfigured() || !getFirebaseDb()) {
-      setChildSnapshotsByGateway({});
+      setMergedChildrenByGateway({});
       setNetworkByGateway({});
       return;
     }
     const unsubs: Array<() => void> = [];
     for (const gatewayId of gatewayIds) {
+      const gateway = ownLiveDevices.find((device) => device.id === gatewayId || device.rootGatewayId === gatewayId);
       unsubs.push(
-        subscribeToDeviceChildren(gatewayId, (childrenForGateway) => {
-          setChildSnapshotsByGateway((prev) => ({ ...prev, [gatewayId]: childrenForGateway }));
-        }),
-      );
-      unsubs.push(
-        subscribeToDeviceNetwork(gatewayId, (networkForGateway) => {
-          setNetworkByGateway((prev) => ({ ...prev, [gatewayId]: networkForGateway }));
-        }),
+        subscribeToGatewayChildrenMerged(
+          gateway?.networkId ?? DEFAULT_NETWORK_ID,
+          gatewayId,
+          (childrenForGateway) => {
+            setMergedChildrenByGateway((prev) => ({ ...prev, [gatewayId]: childrenForGateway }));
+          },
+        ),
       );
     }
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [gatewayIds]);
+  }, [gatewayIds, ownLiveDevices]);
 
   const liveChildDevices = useMemo(() => {
-    const out: AquaDevice[] = [];
-    for (const gatewayId of gatewayIds) {
-      const children = childSnapshotsByGateway[gatewayId] ?? {};
-      const network = networkByGateway[gatewayId] ?? {};
-      const childIds = new Set([...Object.keys(children), ...Object.keys(network)]);
-      for (const sourceId of childIds) {
-        const child = children[sourceId];
-        const net = network[sourceId];
-        const reg = registeredDevices.find((r) => r.deviceId === sourceId);
-        out.push(
-          mapFirebaseChildToAppDevice(
-            gatewayId,
-            sourceId,
-            child?.latest ?? null,
-            child?.status ?? null,
-            net ?? child?.network ?? null,
-            child?.receivedAt ?? new Date().toISOString(),
-            reg?.name,
-          ),
-        );
-      }
-    }
-    return out.sort(deviceSort);
-  }, [gatewayIds, childSnapshotsByGateway, networkByGateway, registeredDevices]);
+    return Object.values(mergedChildrenByGateway).flat().sort(deviceSort);
+  }, [mergedChildrenByGateway]);
 
   const sourceNetworkDevices = useMemo(() => {
     const out: AquaDevice[] = [];

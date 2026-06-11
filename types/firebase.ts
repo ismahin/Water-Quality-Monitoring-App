@@ -4,6 +4,26 @@
 
 export type FirebaseDeviceRole = 'SINGLE' | 'GATEWAY' | 'CHILD' | 'RELAY' | string;
 
+export type FirebaseChildLifecycleState =
+  | 'PAIR_ACCEPTED_WAITING_ACK'
+  | 'PAIR_SAVED_WAITING_TEST'
+  | 'ACTIVE'
+  | 'OFFLINE'
+  | 'STALE'
+  | string;
+
+export interface FirebasePairLifecycleFields {
+  schema_version?: number;
+  pair_stage?: FirebaseChildLifecycleState;
+  pair_confirmed?: boolean;
+  telemetry_received?: boolean;
+  lifecycle_state?: FirebaseChildLifecycleState;
+  paired_at_ms?: number;
+  pair_updated_ms?: number;
+  last_pair_event?: string;
+  message?: string;
+}
+
 export interface FirebaseLatestReading {
   device_id?: string;
   role?: FirebaseDeviceRole;
@@ -37,7 +57,7 @@ export interface FirebaseLatestReading {
   calibration_status?: string;
 }
 
-export interface FirebaseDeviceStatus {
+export interface FirebaseDeviceStatus extends FirebasePairLifecycleFields {
   device_id?: string;
   role?: FirebaseDeviceRole;
   hardware_mode?: FirebaseDeviceRole;
@@ -70,7 +90,6 @@ export interface FirebaseDeviceStatus {
   uptime_ms?: number;
   remove_requested?: boolean;
   reprovision_required?: boolean;
-  message?: string;
   /** Legacy firmware field; prefer structured LoRa fields above */
   lora?: string;
 }
@@ -109,7 +128,7 @@ export interface FirebaseChildLatest {
   gateway_uplink_enabled?: boolean;
 }
 
-export interface FirebaseChildStatus {
+export interface FirebaseChildStatus extends FirebasePairLifecycleFields {
   source_id?: string;
   device_id?: string;
   role?: FirebaseDeviceRole;
@@ -153,6 +172,15 @@ export interface FirebaseNetworkNode {
   gateway_rssi?: number;
   gateway_snr?: number;
   battery?: number;
+  schema_version?: number;
+  pair_stage?: FirebaseChildLifecycleState;
+  pair_confirmed?: boolean;
+  telemetry_received?: boolean;
+  lifecycle_state?: FirebaseChildLifecycleState;
+  paired_at_ms?: number;
+  pair_updated_ms?: number;
+  last_pair_event?: string;
+  message?: string;
   [key: string]: unknown;
 }
 
@@ -161,6 +189,29 @@ export interface FirebaseChildSnapshot {
   status: FirebaseChildStatus | null;
   network?: FirebaseNetworkNode | null;
   receivedAt: string;
+}
+
+export interface FirebaseDeviceIdentity {
+  device_id?: string;
+  role?: string;
+  hardware_mode?: string;
+  network_id?: string;
+  parent_id?: string;
+  root_gateway_id?: string;
+  firmware_version?: string;
+  schema_version?: number;
+}
+
+export interface FirebaseDeviceLink {
+  parent_id?: string;
+  root_gateway_id?: string;
+  network_id?: string;
+  role?: string;
+  route?: string;
+  depth?: number;
+  pair_confirmed?: boolean;
+  telemetry_received?: boolean;
+  lifecycle_state?: FirebaseChildLifecycleState;
 }
 
 /** Written by ESP32 at `devices/{id}/commands/reset_wifi_ack` after handling reset_wifi */

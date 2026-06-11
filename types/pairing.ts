@@ -39,10 +39,17 @@ export type PairingCommand =
   | { cmd: 'scan_wifi'; max_results?: number }
   | { cmd: 'wifi_scan'; max_results?: number }
   | { cmd: 'set_id'; device_id: string; network_id: string }
-  | { cmd: 'set_wifi'; ssid: string; password: string; gateway: boolean }
+  | { cmd: 'set_wifi'; ssid: string; password: string; pass?: string; gateway: boolean }
   | { cmd: 'pair'; parent_id: string; role: 'CHILD' | 'RELAY'; network_id: string }
   | { cmd: 'reset_pair' }
   | { cmd: 'factory' };
+
+export type PairingCommandEnvelope = {
+  v: 2;
+  cmd_id: string;
+  cmd: string;
+  args?: Record<string, unknown>;
+};
 
 export interface PairingDeviceInfo {
   type?: 'info';
@@ -233,7 +240,8 @@ export type PairingNotification =
   | ({ type: 'wifi_result' } & WifiSetupResult)
   | { type: 'pair_started'; ok: boolean; parent_id?: string; role?: 'CHILD' | 'RELAY'; message?: string }
   | { type: 'pair_result'; ok: boolean; stage?: string; parent_id?: string; root_gateway_id?: string; message?: string }
-  | { type: 'server_test'; status: 'sent' | string; test_id?: string; message?: string }
+  | { v?: 2; type: 'cmd_ack'; cmd_id?: string; ok: boolean; stage?: string; message?: string; [key: string]: unknown }
+  | { type: 'server_test'; ok?: boolean; status: 'sent' | string; test_id?: string; message?: string }
   | { type: 'reset_pair'; ok: boolean; message?: string }
   | { type: 'factory'; ok: boolean; message?: string }
   | { type: string; ok?: boolean; message?: string; [key: string]: unknown };

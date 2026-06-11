@@ -32,10 +32,16 @@ export interface DeviceStatus {
   role?: PairingDeviceRole;
   parent_id?: string;
   root_gateway_id?: string;
+  network_id?: string;
   last_seen_ms?: number;
   battery?: number;
   rssi?: number;
   snr?: number;
+  pair_stage?: string;
+  pair_confirmed?: boolean;
+  telemetry_received?: boolean;
+  lifecycle_state?: string;
+  message?: string;
 }
 
 export interface NetworkDevice {
@@ -60,6 +66,11 @@ export interface TopologyNode {
   battery?: number;
   rssi?: number;
   snr?: number;
+  pair_stage?: string;
+  pair_confirmed?: boolean;
+  telemetry_received?: boolean;
+  lifecycle_state?: string;
+  message?: string;
   children?: TopologyNode[];
 }
 
@@ -74,4 +85,3 @@ export interface PairingTestRecord {
   status?: string;
   [key: string]: unknown;
 }
-

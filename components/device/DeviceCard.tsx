@@ -19,6 +19,18 @@ export function DeviceCard({ device, onDashboard }: Props) {
   const status = device.status;
   const onlineLabel = device.online === null ? 'Unknown' : device.online ? 'Online' : 'Offline';
   const signal = formatSignalQuality(status?.rssi ?? latest?.rssi);
+  const childStatusLabel =
+    status?.pair_stage === 'PAIR_ACCEPTED_WAITING_ACK'
+      ? 'Pairing accepted, waiting for child ACK'
+      : status?.pair_stage === 'PAIR_SAVED_WAITING_TEST' || (status?.pair_confirmed === true && status?.telemetry_received !== true)
+        ? 'Paired, waiting for first data'
+        : status?.lifecycle_state === 'ACTIVE' || status?.telemetry_received === true
+          ? 'Active'
+          : status?.lifecycle_state === 'STALE'
+            ? 'Stale'
+            : status?.lifecycle_state === 'OFFLINE'
+              ? 'Offline'
+              : null;
 
   return (
     <Card style={{ borderRadius: radius.xl, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, ...shadows.soft }}>
@@ -32,6 +44,9 @@ export function DeviceCard({ device, onDashboard }: Props) {
               <Text style={{ marginTop: 4, color: colors.mutedStrong, fontWeight: '700' }}>
                 Parent {latest?.parent_id || status?.parent_id || '-'} · Root {latest?.root_gateway_id || status?.root_gateway_id || '-'}
               </Text>
+              {childStatusLabel ? (
+                <Text style={{ marginTop: 4, color: colors.warning, fontWeight: '800' }}>{childStatusLabel}</Text>
+              ) : null}
             </View>
             <View style={{ alignItems: 'flex-end', gap: 6 }}>
               <Chip compact style={{ backgroundColor: device.online ? '#DCFCE7' : '#FEF3C7' }} textStyle={{ fontWeight: '800', fontSize: 11 }}>

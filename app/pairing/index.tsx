@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Card, Chip, ProgressBar } from 'react-native-paper';
+import { onValue, ref } from 'firebase/database';
 import { Bluetooth, CheckCircle2, Route, ShieldAlert } from 'lucide-react-native';
 import { AppHeader } from '../../components/AppHeader';
 import { AppScreen } from '../../components/AppScreen';
@@ -10,6 +11,8 @@ import { SecondaryButton } from '../../components/SecondaryButton';
 import { colors, radius, shadows, spacing } from '../../constants/theme';
 import { useDeviceLatest } from '../../hooks/useDeviceLatest';
 import { usePairingBle } from '../../hooks/usePairingBle';
+import { getFirebaseDb } from '../../services/firebase/firebaseClient';
+import { legacyGatewayChildrenPath, networkGatewayChildLatestPath, networkGatewayChildStatusPath } from '../../services/firebase/schemaV4Paths';
 import type { PairingBleDevice, PairingDeviceRole, PairingNotification, PairingParent } from '../../types/pairing';
 import { DEFAULT_NETWORK_ID } from '../../utils/pairingUtils';
 
@@ -68,6 +71,15 @@ function sortParents(parents: PairingParent[], networkId: string): PairingParent
 
 function notificationKey(notification: PairingNotification | undefined): string {
   return notification ? JSON.stringify(notification) : '';
+}
+
+function isSuccessfulPairAck(notification: PairingNotification | undefined): boolean {
+  if (!notification) return false;
+  if (notification.type === 'pair_result') return notification.ok === true;
+  if (notification.type === 'server_test') return notification.status === 'sent' || notification.ok === true;
+  if (notification.type !== 'cmd_ack') return false;
+  const stage = typeof notification.stage === 'string' ? notification.stage : '';
+  return notification.ok === true && ['PAIR_SAVED_WAITING_TEST', 'ACTIVE', 'saved', 'server_test'].includes(stage);
 }
 
 function roleBadgeColor(role: PairingDeviceRole): string {
@@ -175,50 +187,44 @@ export default function PairingWizardScreen() {
   const [parentAccepted, setParentAccepted] = useState(false);
   const [pairSaved, setPairSaved] = useState(false);
   const [pairError, setPairError] = useState<string | null>(null);
+  const [pairSending, setPairSending] = useState(false);
+  const [pairCommandSent, setPairCommandSent] = useState(false);
+  const [childFirebaseSeen, setChildFirebaseSeen] = useState(false);
   const [testId, setTestId] = useState<string | null>(null);
   const [serverTestTimedOut, setServerTestTimedOut] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [handledPairStartedKey, setHandledPairStartedKey] = useState('');
   const [handledPairResultKey, setHandledPairResultKey] = useState('');
   const [handledServerTestKey, setHandledServerTestKey] = useState('');
+  const [handledCmdAckKey, setHandledCmdAckKey] = useState('');
 
   const newDeviceId = ble.info?.deviceId ?? ble.connectedDevice?.name?.replace(/^WQMPAIR_/, '') ?? 'New Device';
   const networkId = ble.info?.networkId || networkParam || DEFAULT_NETWORK_ID;
   const deviceLive = useDeviceLatest(networkId, newDeviceId || '-');
-  const cloudConfirmed = !!deviceLive.latest || !!deviceLive.status;
+  const cloudConfirmed = !!deviceLive.latest || !!deviceLive.status || childFirebaseSeen;
   const sortedParents = useMemo(
     () => sortParents(ble.parents.filter((parent) => parent.id !== newDeviceId), networkId),
     [ble.parents, networkId, newDeviceId],
   );
-  const latestPairStarted = useMemo(
-    () => ble.notifications.find((notification) => notification.type === 'pair_started'),
-    [ble.notifications],
-  );
-  const latestParentsNotification = useMemo(
-    () => ble.notifications.find((notification) => notification.type === 'parents'),
-    [ble.notifications],
-  );
-  const latestPairResult = useMemo(
-    () => ble.notifications.find((notification) => notification.type === 'pair_result'),
-    [ble.notifications],
-  );
-  const latestServerTest = useMemo(
-    () => ble.notifications.find((notification) => notification.type === 'server_test'),
-    [ble.notifications],
-  );
+  const latestPairStarted = ble.notifications.find((notification) => notification.type === 'pair_started');
+  const latestParentsNotification = ble.notifications.find((notification) => notification.type === 'parents');
+  const latestPairResult = ble.notifications.find((notification) => notification.type === 'pair_result');
+  const latestServerTest = ble.notifications.find((notification) => notification.type === 'server_test');
+  const latestCmdAck = ble.notifications.find((notification) => notification.type === 'cmd_ack');
   const validationError =
     ble.info?.switchMode === 'NORMAL'
       ? 'Turn the device pairing switch ON, then press Retry.'
       : ble.info && !ble.info.loraReady
         ? 'LoRa is not ready on this device. Check antenna/module wiring and restart.'
         : null;
+  const bleDisconnectedDuringSetup = step !== 'instructions' && step !== 'ble' && !ble.connectedDevice;
   const alreadyPaired = ble.info?.paired === true;
   const canScanParents =
     !!ble.connectedDevice &&
-    !!ble.info &&
-    ble.info.switchMode === 'PAIRING' &&
-    ble.info.loraReady === true &&
-    ble.info.paired !== true;
+    (!ble.info ||
+      (ble.info.switchMode === 'PAIRING' &&
+        ble.info.loraReady === true &&
+        ble.info.paired !== true));
   const progressValue =
     cloudConfirmed ? 1 : testId || serverTestTimedOut ? 0.9 : pairSaved ? 0.78 : parentAccepted ? 0.66 : pairStarted ? 0.55 : selectedParent ? 0.42 : scanComplete ? 0.3 : ble.info ? 0.2 : ble.connectedDevice ? 0.1 : 0.04;
 
@@ -239,6 +245,12 @@ export default function PairingWizardScreen() {
   useEffect(() => {
     if (latestParentsNotification?.type === 'parents') setScanComplete(true);
   }, [latestParentsNotification]);
+
+  useEffect(() => {
+    if (step !== 'parents' || scanComplete) return;
+    const timer = setTimeout(() => setScanComplete(true), 10000);
+    return () => clearTimeout(timer);
+  }, [scanComplete, step]);
 
   useEffect(() => {
     if (!latestPairResult || latestPairResult.type !== 'pair_result') return;
@@ -263,8 +275,64 @@ export default function PairingWizardScreen() {
   }, [handledServerTestKey, latestServerTest]);
 
   useEffect(() => {
+    if (!latestCmdAck || latestCmdAck.type !== 'cmd_ack') return;
+    const key = notificationKey(latestCmdAck);
+    if (key === handledCmdAckKey) return;
+    setHandledCmdAckKey(key);
+    if (latestCmdAck.ok !== true) {
+      setPairError(latestCmdAck.message ?? `Command failed at ${latestCmdAck.stage ?? 'unknown stage'}.`);
+      return;
+    }
+    if (latestCmdAck.stage === 'PAIR_ACCEPTED_WAITING_ACK') {
+      setPairStarted(true);
+      setParentAccepted(true);
+    }
+    if (isSuccessfulPairAck(latestCmdAck)) {
+      setPairStarted(true);
+      setParentAccepted(true);
+      setPairSaved(true);
+      setPairError(null);
+      setServerTestTimedOut(true);
+    }
+  }, [handledCmdAckKey, latestCmdAck]);
+
+  useEffect(() => {
     if (pairSaved && (testId || serverTestTimedOut)) setStep('success');
   }, [pairSaved, serverTestTimedOut, testId]);
+
+  useEffect(() => {
+    setChildFirebaseSeen(false);
+    if (!selectedParent || !newDeviceId || newDeviceId === 'New Device') return;
+    const db = getFirebaseDb();
+    if (!db) return;
+
+    const gatewayId = selectedParent.root_gateway_id || selectedParent.id;
+    const childId = newDeviceId;
+    const paths = [
+      networkGatewayChildStatusPath(networkId, gatewayId, childId),
+      networkGatewayChildLatestPath(networkId, gatewayId, childId),
+      `${legacyGatewayChildrenPath(gatewayId)}/${childId}/status`,
+      `${legacyGatewayChildrenPath(gatewayId)}/${childId}/latest`,
+    ];
+
+    const unsubs = paths.map((path) =>
+      onValue(ref(db, path), (snapshot) => {
+        if (!snapshot.exists()) return;
+        console.log('[PAIRING UI] Firebase child confirmation found at:', path);
+        setChildFirebaseSeen(true);
+      }),
+    );
+
+    return () => unsubs.forEach((unsub) => unsub());
+  }, [networkId, newDeviceId, selectedParent]);
+
+  useEffect(() => {
+    if (!pairCommandSent || !cloudConfirmed) return;
+    setPairSaved(true);
+    setPairError(null);
+    setServerTestTimedOut(true);
+    setStep('success');
+  }, [cloudConfirmed, pairCommandSent]);
 
   useEffect(() => {
     if (!pairSaved || testId) return;
@@ -274,20 +342,38 @@ export default function PairingWizardScreen() {
 
   const startBleScan = async () => {
     setStep('ble');
-    await ble.startScan();
+    try {
+      await ble.startScan();
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : 'Could not start BLE scan.');
+    }
   };
 
   const connectNewDevice = async (deviceId: string) => {
-    await ble.connect(deviceId);
-    setStep('validate');
+    try {
+      await ble.connect(deviceId);
+      setStep('validate');
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : 'Could not connect to the new device.');
+    }
   };
 
   const scanParents = async () => {
     setScanError(null);
-    setScanComplete(false);
+    setScanComplete(ble.parents.length > 0);
     setSelectedParent(null);
     setStep('parents');
-    await ble.actions.scanParents();
+    console.log('[LORA UI] Sending LoRa parent scan command: {"cmd":"scan"}');
+    try {
+      await ble.actions.scanParents();
+    } catch (error) {
+      if (ble.parents.length === 0) {
+        setScanError(error instanceof Error ? error.message : 'Could not send LoRa parent scan command.');
+        setScanComplete(true);
+      } else {
+        console.warn('[LORA UI] Parent scan command failed, using already received parent beacons:', error);
+      }
+    }
   };
 
   const selectParent = (parent: PairingParent) => {
@@ -295,21 +381,39 @@ export default function PairingWizardScreen() {
   };
 
   const pairNewChild = async () => {
-    if (!selectedParent) return;
+    if (!selectedParent || pairSending) return;
     setStep('progress');
+    setPairSending(true);
     setPairStarted(false);
     setParentAccepted(false);
     setPairSaved(false);
     setPairError(null);
+    setPairCommandSent(false);
+    setChildFirebaseSeen(false);
     setTestId(null);
     setServerTestTimedOut(false);
-    await ble.actions.startPairing(selectedParent.id, 'CHILD', selectedParent.network_id);
+    console.log('[LORA UI] Sending pair command:', JSON.stringify({ cmd: 'pair', parent_id: selectedParent.id, role: 'CHILD', network_id: selectedParent.network_id }));
+    try {
+      await ble.actions.startPairing(selectedParent.id, 'CHILD', selectedParent.network_id);
+      setPairCommandSent(true);
+      setPairStarted(true);
+    } catch (error) {
+      setPairError(error instanceof Error ? error.message : 'Could not send pair command.');
+    } finally {
+      setPairSending(false);
+    }
   };
 
   const resetPairing = async () => {
     setPairError(null);
-    await ble.actions.resetPairing();
-    setTimeout(() => void ble.actions.getInfo(), 500);
+    try {
+      await ble.actions.resetPairing();
+      setTimeout(() => void ble.actions.getInfo().catch((error) => {
+        console.warn('[BLE INFO] Refresh after reset failed:', error);
+      }), 500);
+    } catch (error) {
+      setPairError(error instanceof Error ? error.message : 'Could not reset pairing.');
+    }
   };
 
   const addAnother = async () => {
@@ -319,6 +423,9 @@ export default function PairingWizardScreen() {
     setParentAccepted(false);
     setPairSaved(false);
     setPairError(null);
+    setPairSending(false);
+    setPairCommandSent(false);
+    setChildFirebaseSeen(false);
     setTestId(null);
     setServerTestTimedOut(false);
     await ble.disconnect();
@@ -340,6 +447,16 @@ export default function PairingWizardScreen() {
         <Card style={{ borderRadius: radius.lg, backgroundColor: '#FEF2F2', marginBottom: spacing.md }}>
           <Card.Content>
             <Text selectable style={{ color: colors.danger, fontWeight: '800' }}>{ble.error ?? scanError ?? pairError}</Text>
+          </Card.Content>
+        </Card>
+      ) : null}
+
+      {bleDisconnectedDuringSetup ? (
+        <Card style={{ borderRadius: radius.lg, backgroundColor: '#FEF2F2', marginBottom: spacing.md }}>
+          <Card.Content style={{ gap: spacing.sm }}>
+            <Text style={{ color: colors.danger, fontWeight: '900' }}>BLE disconnected from the new device.</Text>
+            <Text style={{ color: colors.mutedStrong }}>Reconnect the new device, then scan parents again.</Text>
+            <PrimaryButton label="Reconnect / Scan BLE" onPress={() => void startBleScan()} />
           </Card.Content>
         </Card>
       ) : null}
@@ -464,7 +581,7 @@ export default function PairingWizardScreen() {
                 <Text selectable style={{ color: colors.mutedStrong }}>Root gateway ID: {selectedParent.root_gateway_id}</Text>
                 <Text style={{ color: colors.mutedStrong }}>Depth: {selectedParent.depth} - RSSI: {selectedParent.rssi ?? '-'} - SNR: {selectedParent.snr ?? '-'}</Text>
                 <Text selectable style={{ color: colors.mutedStrong }}>Network ID: {selectedParent.network_id}</Text>
-                <PrimaryButton label="Pair New Child" onPress={() => void pairNewChild()} />
+                <PrimaryButton label={pairSending ? 'Pairing...' : 'Pair New Child'} loading={pairSending} disabled={pairSending} onPress={() => void pairNewChild()} />
               </Card.Content>
             </Card>
           ) : null}
@@ -480,11 +597,11 @@ export default function PairingWizardScreen() {
             <ProgressRow done={!!ble.info} label="Device info loaded" />
             <ProgressRow done={scanComplete} label="LoRa parent scan complete" />
             <ProgressRow done={!!selectedParent} label="Parent selected" />
-            <ProgressRow done={pairStarted} label="Pair request sent" />
+            <ProgressRow done={pairStarted || pairSending || pairCommandSent} label="Pair request sent" />
             <ProgressRow done={parentAccepted} label="Parent accepted" />
             <ProgressRow done={pairSaved} label="Pairing saved" />
             <ProgressRow done={!!testId || serverTestTimedOut} label={serverTestTimedOut && !testId ? 'Test packet not received yet' : 'Test packet sent'} />
-            <ProgressRow done={cloudConfirmed} label="Cloud/Firebase confirmation if available" />
+            <ProgressRow done={cloudConfirmed} label="Cloud/Firebase confirmation" />
             {serverTestTimedOut && !testId ? (
               <Text style={{ color: colors.warning, fontWeight: '900' }}>
                 Pairing was saved, but the app did not receive the server_test notification within 15 seconds. The child can still be added.

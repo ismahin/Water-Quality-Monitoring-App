@@ -102,7 +102,7 @@ export function NodeCard({ device, depth, isLast, onPress }: Props) {
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: '900', color: colors.navy, fontSize: 16 }}>{device.name}</Text>
                 <Text style={{ marginTop: 4, color: colors.mutedStrong, fontSize: 12, fontWeight: '600' }}>
-                  {signal} link
+                  {device.lifecycleLabel ?? (device.pendingFirstTelemetry ? 'Waiting for first data' : `${signal} link`)}
                 </Text>
               </View>
             </View>
