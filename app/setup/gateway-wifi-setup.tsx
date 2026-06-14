@@ -83,6 +83,13 @@ function InfoChip({
   );
 }
 
+function queueStatusText(size?: number, ready?: boolean): string {
+  if (ready === false) return 'Persistent queue not ready; check ESP32 partition/LittleFS.';
+  if (ready === true && (size ?? 0) === 0) return 'All cloud data synced.';
+  if (ready === true && (size ?? 0) > 0) return 'Stored locally, waiting for Wi-Fi/Firebase.';
+  return 'Queue status unknown.';
+}
+
 export default function GatewayWifiSetupScreen() {
   const router = useRouter();
   const ble = usePairingBle();
@@ -189,7 +196,7 @@ export default function GatewayWifiSetupScreen() {
       setWifiScanning(false);
       return;
     }
-    console.log('[WIFI UI] Sending Wi-Fi scan command: {"cmd":"scan_wifi"}');
+      console.log('[WIFI UI] Sending Wi-Fi scan command: {"v":2,"cmd_id":"app_...","cmd":"scan_wifi","args":{}}');
     setWifiScanRequested(true);
     setWifiScanning(true);
     setWifiScanUnavailable(false);
@@ -508,6 +515,8 @@ export default function GatewayWifiSetupScreen() {
                     <InfoChip icon={<Network size={14} color={colors.primary} />} label="Network" value={ble.info.networkId || DEFAULT_NETWORK_ID} />
                     <InfoChip icon={<Router size={14} color={colors.primary} />} label="Role" value={ble.info.role} />
                     <InfoChip icon={<ShieldCheck size={14} color={colors.primary} />} label="Mode" value={ble.info.switchMode} />
+                    <InfoChip icon={<Cpu size={14} color={colors.primary} />} label="Firmware" value={ble.info.fw ?? 'v3.2.17'} />
+                    <InfoChip icon={<Bluetooth size={14} color={colors.primary} />} label="BLE protocol" value={ble.info.protocol ?? '-'} />
                     <InfoChip
                       icon={<Radio size={14} color={ble.info.loraReady ? colors.success : colors.warning} />}
                       label="LoRa"
@@ -520,6 +529,24 @@ export default function GatewayWifiSetupScreen() {
                       value={ble.info.wifiConnected ? 'Connected' : 'Not connected'}
                       tone={ble.info.wifiConnected ? colors.success : colors.mutedStrong}
                     />
+                    <InfoChip
+                      icon={<Network size={14} color={ble.info.offlineQueueReady === false ? colors.danger : colors.primary} />}
+                      label="Offline queue"
+                      value={`${ble.info.offlineFirebaseQueueSize ?? 0} pending`}
+                      tone={ble.info.offlineQueueReady === false ? colors.danger : colors.primary}
+                    />
+                    <InfoChip
+                      icon={<ShieldCheck size={14} color={ble.info.offlineQueueReady === false ? colors.danger : colors.primary} />}
+                      label="Queue ready"
+                      value={ble.info.offlineQueueReady === undefined ? '-' : ble.info.offlineQueueReady ? 'yes' : 'no'}
+                      tone={ble.info.offlineQueueReady === false ? colors.danger : colors.primary}
+                    />
+                    <InfoChip icon={<Network size={14} color={colors.primary} />} label="Gateway uplink queue" value={String(ble.info.gatewayUplinkQueueSize ?? 0)} />
+                    <InfoChip icon={<Network size={14} color={colors.primary} />} label="Pairing cloud queue" value={String(ble.info.pairingCloudQueueSize ?? 0)} />
+                    <InfoChip icon={<Network size={14} color={colors.primary} />} label="Forward queue" value={String(ble.info.forwardQueueSize ?? 0)} />
+                    <Text style={{ color: ble.info.offlineQueueReady === false ? colors.danger : colors.mutedStrong, fontWeight: '800', lineHeight: 20 }}>
+                      {queueStatusText(ble.info.offlineFirebaseQueueSize, ble.info.offlineQueueReady)}
+                    </Text>
                   </View>
                 )}
               </Card.Content>

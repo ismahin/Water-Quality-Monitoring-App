@@ -11,6 +11,13 @@ import { BleDeviceCard } from '../../components/pairing/BleDeviceCard';
 import { colors, radius, shadows, spacing } from '../../constants/theme';
 import { usePairingBle } from '../../hooks/usePairingBle';
 
+function queueStatusText(size?: number, ready?: boolean): string {
+  if (ready === false) return 'Persistent queue not ready; check ESP32 partition/LittleFS.';
+  if (ready === true && (size ?? 0) === 0) return 'All cloud data synced.';
+  if (ready === true && (size ?? 0) > 0) return 'Stored locally, waiting for Wi-Fi/Firebase.';
+  return 'Queue status unknown.';
+}
+
 export default function PairingConfigScreen() {
   const router = useRouter();
   const ble = usePairingBle();
@@ -111,6 +118,20 @@ export default function PairingConfigScreen() {
               <Text style={{ color: colors.mutedStrong }}>Paired: {ble.info?.paired ? 'Yes' : 'No'}</Text>
               <Text style={{ color: colors.mutedStrong }}>Wi-Fi connected: {ble.info?.wifiConnected ? 'Yes' : 'No'}</Text>
               <Text style={{ color: colors.mutedStrong }}>LoRa ready: {ble.info?.loraReady ? 'Yes' : 'No'}</Text>
+              <Text style={{ color: colors.mutedStrong }}>Firmware: {ble.info?.fw ?? 'v3.2.17'}</Text>
+              <Text style={{ color: colors.mutedStrong }}>BLE protocol: {ble.info?.protocol ?? '-'}</Text>
+              <Text style={{ color: ble.info?.offlineQueueReady === false ? colors.danger : colors.mutedStrong }}>
+                Offline Firebase queue: {ble.info?.offlineFirebaseQueueSize ?? 0} pending batches
+              </Text>
+              <Text style={{ color: ble.info?.offlineQueueReady === false ? colors.danger : colors.mutedStrong }}>
+                Offline queue ready: {ble.info?.offlineQueueReady === undefined ? '-' : ble.info.offlineQueueReady ? 'yes' : 'no'}
+              </Text>
+              <Text style={{ color: ble.info?.offlineQueueReady === false ? colors.danger : colors.mutedStrong, fontWeight: '700' }}>
+                {queueStatusText(ble.info?.offlineFirebaseQueueSize, ble.info?.offlineQueueReady)}
+              </Text>
+              <Text style={{ color: colors.mutedStrong }}>Gateway uplink queue: {ble.info?.gatewayUplinkQueueSize ?? 0}</Text>
+              <Text style={{ color: colors.mutedStrong }}>Pairing cloud queue: {ble.info?.pairingCloudQueueSize ?? 0}</Text>
+              <Text style={{ color: colors.mutedStrong }}>Forward queue: {ble.info?.forwardQueueSize ?? 0}</Text>
             </Card.Content>
           </Card>
 

@@ -30,7 +30,7 @@ function firebaseErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'Unknown error';
 }
 
-export function useLiveDevice(deviceId: string | undefined, firebaseRtdbConnected = true): UseLiveDeviceResult {
+export function useLiveDevice(deviceId: string | undefined, firebaseRtdbConnected = true, networkId?: string): UseLiveDeviceResult {
   const [snapshot, setSnapshot] = useState<FirebaseDeviceSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +59,7 @@ export function useLiveDevice(deviceId: string | undefined, firebaseRtdbConnecte
         setSnapshot(snap);
         setLoading(false);
         setError(null);
-      });
+      }, networkId);
     } catch (e) {
       setError(firebaseErrorMessage(e));
       setLoading(false);
@@ -68,7 +68,7 @@ export function useLiveDevice(deviceId: string | undefined, firebaseRtdbConnecte
     return () => {
       unsub?.();
     };
-  }, [deviceId]);
+  }, [deviceId, networkId]);
 
   const refresh = useCallback(async () => {
     if (!deviceId) return;
@@ -77,13 +77,13 @@ export function useLiveDevice(deviceId: string | undefined, firebaseRtdbConnecte
       return;
     }
     try {
-      const snap = await getDeviceOnce(deviceId);
+      const snap = await getDeviceOnce(deviceId, networkId);
       setSnapshot(snap);
       setError(null);
     } catch (e) {
       setError(firebaseErrorMessage(e));
     }
-  }, [deviceId]);
+  }, [deviceId, networkId]);
 
   const device =
     snapshot && deviceId

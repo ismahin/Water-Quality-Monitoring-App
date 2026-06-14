@@ -1,5 +1,6 @@
 import { off, onValue, ref, serverTimestamp, set, update } from 'firebase/database';
 import { db } from './firebaseClient';
+import { sendRemoteCommandAndWait } from './remoteCommandService';
 
 /**
  * RTDB instance when Firebase is configured (`db` is `getFirebaseDb` from firebaseClient).
@@ -100,21 +101,28 @@ export function waitForResetWifiAck(
  */
 export async function removeDeviceWithWifiReset(
   deviceId: string,
-  options?: { signal?: AbortSignal; timeoutMs?: number },
+  options?: { signal?: AbortSignal; timeoutMs?: number; networkId?: string },
 ): Promise<RemoveDeviceResult> {
   try {
-    const { commandId } = await sendResetWifiCommand(deviceId);
+    const remoteResult = await sendRemoteCommandAndWait({
+      deviceId,
+      networkId: options?.networkId,
+      cmd: 'reset_wifi',
+      args: { reason: 'removed_from_app' },
+      timeoutMs: options?.timeoutMs ?? 10000,
+      signal: options?.signal,
+    });
+
+    const commandId = remoteResult.commandId;
     if (options?.signal?.aborted) {
       return { ok: false, acked: false, commandId, reason: 'aborted' };
     }
 
-    const waitResult = await waitForResetWifiAck(deviceId, commandId, options?.timeoutMs ?? 10000, options?.signal);
-
-    if (waitResult === 'aborted') {
+    if (!remoteResult.ok && remoteResult.reason === 'aborted') {
       return { ok: false, acked: false, commandId, reason: 'aborted' };
     }
 
-    if (waitResult === 'accepted') {
+    if (remoteResult.ok && (remoteResult.ack.ok === true || remoteResult.ack.status === 'accepted')) {
       try {
         await update(ref(requireDb(), `devices/${deviceId}/app_state`), {
           removed: true,

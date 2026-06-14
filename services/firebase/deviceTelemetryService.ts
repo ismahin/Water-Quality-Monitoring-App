@@ -30,6 +30,8 @@ import { getFirebaseDb } from './firebaseClient';
 import {
   legacyGatewayChildrenPath,
   legacyGatewayNetworkPath,
+  networkDeviceLatestPath,
+  networkDeviceStatusPath,
   networkGatewayChildrenPath,
 } from './schemaV4Paths';
 
@@ -130,7 +132,7 @@ function toChildSnapshot(key: string, snap: DataSnapshot): FirebaseChildSnapshot
 function latestUploadIso(latest?: { last_upload_ms?: number } | null, status?: { last_upload_ms?: number } | null): string | undefined {
   const ms = numOr(status?.last_upload_ms, latest?.last_upload_ms);
   if (!ms) return undefined;
-  return new Date(ms < 10_000_000_000 ? Date.now() : ms).toISOString();
+  return eventTimeIso(ms);
 }
 
 export function calculateOnlineStatus(
@@ -182,7 +184,21 @@ export function getLoraStatus(latest: FirebaseLatestReading | null, status: Fire
 }
 
 export function getWifiConnected(status: FirebaseDeviceStatus | null, _latest: FirebaseLatestReading | null): boolean {
-  return status?.wifi_connected === true;
+  return status?.wifi_connected === true || _latest?.wifi_connected === true;
+}
+
+function firmwareVersion(
+  latest?: { fw?: string; firmware_version?: string; fw_version?: string } | null,
+  status?: { fw?: string; firmware_version?: string; fw_version?: string } | null,
+): string | undefined {
+  return strOr(status?.fw, latest?.fw, status?.fw_version, latest?.fw_version, status?.firmware_version, latest?.firmware_version);
+}
+
+function eventTimeIso(...values: Array<number | undefined | null>): string | undefined {
+  const ms = numOr(...values);
+  if (!ms) return undefined;
+  if (ms > 10_000_000_000) return new Date(ms).toISOString();
+  return new Date(Date.now() - ms).toISOString();
 }
 
 function buildOwnLiveFields(
@@ -208,6 +224,12 @@ function buildOwnLiveFields(
     wifiConnected: getWifiConnected(status, latest),
     sensorMode: status?.sensor_mode,
     commandStream: status?.command_stream,
+    bleProtocol: strOr(status?.protocol, latest?.protocol),
+    offlineFirebaseQueueSize: numOr(status?.offline_firebase_queue_size, latest?.offline_firebase_queue_size),
+    offlineQueueReady: boolOr(status?.offline_queue_ready, latest?.offline_queue_ready),
+    gatewayUplinkQueueSize: numOr(status?.gateway_uplink_queue_size, status?.gateway_uplink_queue, latest?.gateway_uplink_queue_size, latest?.gateway_uplink_queue),
+    pairingCloudQueueSize: numOr(status?.pairing_cloud_queue_size, status?.pairing_cloud_queue, latest?.pairing_cloud_queue_size, latest?.pairing_cloud_queue),
+    forwardQueueSize: numOr(status?.forward_queue_size, latest?.forward_queue_size, status?.forward_queue),
     removeRequested: status?.remove_requested === true,
     reprovisionRequired: status?.reprovision_required === true,
     firebaseMessage: typeof status?.message === 'string' ? status.message : undefined,
@@ -218,11 +240,11 @@ function buildOwnLiveFields(
     loraGatewayReady: boolOr(status?.lora_ready, latest?.lora_ready, status?.lora_gateway_ready, latest?.lora_gateway_ready),
     loraFrequencyMhz: numOr(status?.lora_frequency_mhz, latest?.lora_frequency_mhz),
     loraLastError: strOr(status?.lora_error, latest?.lora_error, status?.lora_last_error, latest?.lora_last_error),
-    loraPacketCount: numOr(status?.lora_packet_count, latest?.lora_packet_count),
+    loraPacketCount: numOr(status?.lora_packet_count, latest?.lora_packet_count, status?.tx_packet_count, latest?.tx_packet_count),
     lastLoraRssi: numOr(status?.last_lora_rssi, latest?.last_lora_rssi),
     lastLoraSnr: numOr(status?.last_lora_snr, latest?.last_lora_snr),
     lastLoraPayload: status?.last_lora_payload,
-    forwardQueue: status?.forward_queue,
+    forwardQueue: numOr(status?.forward_queue, status?.forward_queue_size, latest?.forward_queue_size),
     bleConfigConnected: status?.ble_config_connected,
     telemetryStale: statusSaysOnline && isSnapshotStale(receivedAt),
     sensorStatus: typeof latest?.sensor_status === 'string' ? latest.sensor_status : undefined,
@@ -267,7 +289,7 @@ export function mapFirebaseOwnDeviceToAppDevice(
       turbidityNtu: numOr(latest?.turbidity) ?? 0,
     },
     calibrationStatus: baseCalibrationStatus(latest),
-    firmwareVersion: '1.0.0',
+    firmwareVersion: firmwareVersion(latest, status) ?? 'v3.2.17',
     universalRole,
     isLive: true,
     isDemo: false,
@@ -354,7 +376,11 @@ export function mapFirebaseChildToAppDevice(
   const route = strOr(status?.route, latest?.route, network?.route);
   const parentId = parentFromRoute ?? (route ? route.split('>').slice(1, 2)[0] : gatewayId) ?? gatewayId;
   const pairedAt = numOr(status?.pair_updated_ms, status?.paired_at_ms, network?.pair_updated_ms, network?.paired_at_ms);
-  const lastSeen = latestUploadIso(latest, status) ?? (pairedAt ? new Date(pairedAt).toISOString() : receivedAt);
+  const lastSeen =
+    eventTimeIso(status?.updated_at, network?.updated_at) ??
+    latestUploadIso(latest, status) ??
+    (pairedAt ? eventTimeIso(pairedAt) : undefined) ??
+    receivedAt;
   const online =
     lifecycleState === 'OFFLINE'
       ? 'offline'
@@ -380,7 +406,7 @@ export function mapFirebaseChildToAppDevice(
       turbidityNtu: numOr(latest?.turbidity) ?? 0,
     },
     calibrationStatus: 'ok' as const,
-    firmwareVersion: '1.0.0',
+    firmwareVersion: firmwareVersion(latest, status) ?? strOr(status?.fw_version, network?.fw_version) ?? 'unknown',
     universalRole: (legacyRole === 'relay' ? 'RELAY' : 'CHILD') as UniversalRole,
     hardwareMode: 'NETWORK',
     networkId: strOr(status?.network_id, latest?.network_id, network?.network_id),
@@ -454,16 +480,24 @@ export function subscribeToDeviceStatus(
   });
 }
 
-export function subscribeToDevice(deviceId: string, callback: (snapshot: FirebaseDeviceSnapshot) => void): () => void {
+export function subscribeToDevice(deviceId: string, callback: (snapshot: FirebaseDeviceSnapshot) => void, networkId?: string): () => void {
   const db = getFirebaseDb();
   if (!db) return () => {};
 
-  let latest: FirebaseLatestReading | null = null;
-  let status: FirebaseDeviceStatus | null = null;
-  let latestReceivedAt = new Date().toISOString();
-  let statusReceivedAt = new Date().toISOString();
+  let networkLatest: FirebaseLatestReading | null = null;
+  let networkStatus: FirebaseDeviceStatus | null = null;
+  let legacyLatest: FirebaseLatestReading | null = null;
+  let legacyStatus: FirebaseDeviceStatus | null = null;
+  let networkLatestReceivedAt = new Date().toISOString();
+  let networkStatusReceivedAt = new Date().toISOString();
+  let legacyLatestReceivedAt = new Date().toISOString();
+  let legacyStatusReceivedAt = new Date().toISOString();
 
   const emit = () => {
+    const latest = networkLatest ?? legacyLatest;
+    const status = networkStatus ?? legacyStatus;
+    const latestReceivedAt = networkLatest ? networkLatestReceivedAt : legacyLatestReceivedAt;
+    const statusReceivedAt = networkStatus ? networkStatusReceivedAt : legacyStatusReceivedAt;
     const receivedAt =
       new Date(latestReceivedAt).getTime() >= new Date(statusReceivedAt).getTime()
         ? latestReceivedAt
@@ -471,21 +505,34 @@ export function subscribeToDevice(deviceId: string, callback: (snapshot: Firebas
     callback({ latest, status, receivedAt });
   };
 
-  const unsubLatest = onValue(ref(db, `devices/${deviceId}/latest`), (snap) => {
-    latest = snap.val() as FirebaseLatestReading | null;
-    latestReceivedAt = new Date().toISOString();
-    emit();
-  });
+  const unsubs: Array<() => void> = [];
+  if (networkId) {
+    unsubs.push(onValue(ref(db, networkDeviceLatestPath(networkId, deviceId)), (snap) => {
+      networkLatest = snap.val() as FirebaseLatestReading | null;
+      networkLatestReceivedAt = new Date().toISOString();
+      emit();
+    }));
+    unsubs.push(onValue(ref(db, networkDeviceStatusPath(networkId, deviceId)), (snap) => {
+      networkStatus = snap.val() as FirebaseDeviceStatus | null;
+      networkStatusReceivedAt = new Date().toISOString();
+      emit();
+    }));
+  }
 
-  const unsubStatus = onValue(ref(db, `devices/${deviceId}/status`), (snap) => {
-    status = snap.val() as FirebaseDeviceStatus | null;
-    statusReceivedAt = new Date().toISOString();
+  unsubs.push(onValue(ref(db, `devices/${deviceId}/latest`), (snap) => {
+    legacyLatest = snap.val() as FirebaseLatestReading | null;
+    legacyLatestReceivedAt = new Date().toISOString();
     emit();
-  });
+  }));
+
+  unsubs.push(onValue(ref(db, `devices/${deviceId}/status`), (snap) => {
+    legacyStatus = snap.val() as FirebaseDeviceStatus | null;
+    legacyStatusReceivedAt = new Date().toISOString();
+    emit();
+  }));
 
   return () => {
-    unsubLatest();
-    unsubStatus();
+    unsubs.forEach((unsub) => unsub());
   };
 }
 
@@ -658,17 +705,29 @@ export function subscribeToDeviceNetwork(
 
 export const subscribeToGatewayNetwork = subscribeToDeviceNetwork;
 
-export async function getDeviceOnce(deviceId: string): Promise<FirebaseDeviceSnapshot> {
+export async function getDeviceOnce(deviceId: string, networkId?: string): Promise<FirebaseDeviceSnapshot> {
   const db = getFirebaseDb();
   const receivedAt = new Date().toISOString();
   if (!db) return { latest: null, status: null, receivedAt };
-  const [latestSnap, statusSnap] = await Promise.all([
+  const reads = [
     get(ref(db, `devices/${deviceId}/latest`)),
     get(ref(db, `devices/${deviceId}/status`)),
-  ]);
+  ];
+  if (networkId) {
+    reads.unshift(
+      get(ref(db, networkDeviceStatusPath(networkId, deviceId))),
+    );
+    reads.unshift(
+      get(ref(db, networkDeviceLatestPath(networkId, deviceId))),
+    );
+  }
+  const snaps = await Promise.all(reads);
+  const [networkLatestSnap, networkStatusSnap, legacyLatestSnap, legacyStatusSnap] = networkId
+    ? snaps
+    : [null, null, snaps[0], snaps[1]];
   return {
-    latest: latestSnap.val() as FirebaseLatestReading | null,
-    status: statusSnap.val() as FirebaseDeviceStatus | null,
+    latest: (networkLatestSnap?.val() ?? legacyLatestSnap?.val()) as FirebaseLatestReading | null,
+    status: (networkStatusSnap?.val() ?? legacyStatusSnap?.val()) as FirebaseDeviceStatus | null,
     receivedAt,
   };
 }

@@ -25,6 +25,14 @@ import { PrimaryButton } from '../../components/PrimaryButton';
 import { SecondaryButton } from '../../components/SecondaryButton';
 import { SignalStrengthBar } from '../../components/SignalStrengthBar';
 import { StatusChip } from '../../components/StatusChip';
+import { RemoteCommandControls } from '../../components/RemoteCommandControls';
+
+function offlineQueueStatusText(size?: number, ready?: boolean): string {
+  if (ready === false) return 'Persistent queue not ready; check ESP32 partition/LittleFS.';
+  if (ready === true && (size ?? 0) === 0) return 'All cloud data synced.';
+  if (ready === true && (size ?? 0) > 0) return 'Stored locally, waiting for Wi-Fi/Firebase.';
+  return 'Queue status unknown.';
+}
 
 export default function DeviceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -41,8 +49,9 @@ export default function DeviceDetailScreen() {
 
   const isRegisteredOwnLive = isRegisteredLiveDevice(deviceId);
   const isLive = !!device?.isLive || isRegisteredOwnLive;
-  const live = useLiveDevice(isRegisteredOwnLive ? deviceId : undefined, firebaseRtdbConnected);
+  const live = useLiveDevice(isRegisteredOwnLive ? deviceId : undefined, firebaseRtdbConnected, device?.networkId);
   const snap = getLiveSnapshot(deviceId);
+  const remoteNetworkId = device?.networkId ?? live.status?.network_id ?? live.latest?.network_id;
 
   const [removeConfirmVisible, setRemoveConfirmVisible] = useState(false);
   const [removeSending, setRemoveSending] = useState(false);
@@ -82,7 +91,10 @@ export default function DeviceDetailScreen() {
     setRemoveConfirmVisible(false);
     setRemoveSending(true);
     try {
-      const result = await removeDeviceWithWifiReset(deviceId, { signal });
+      const result = await removeDeviceWithWifiReset(deviceId, {
+        signal,
+        networkId: remoteNetworkId,
+      });
       if (!result.ok && result.reason === 'aborted') {
         return;
       }
@@ -108,7 +120,7 @@ export default function DeviceDetailScreen() {
       removeInProgressRef.current = false;
       setRemoveSending(false);
     }
-  }, [deviceId, removeRegisteredDevice, router]);
+  }, [deviceId, remoteNetworkId, removeRegisteredDevice, router]);
 
   const removeLocallyOnly = useCallback(async () => {
     if (removeInProgressRef.current) return;
@@ -156,6 +168,11 @@ export default function DeviceDetailScreen() {
   const ip = live.latest?.ip ?? live.status?.ip ?? (isGatewayOrSingle(device) ? (device as SingleDevice | GatewayDevice).ip : undefined);
   const firebaseReady = isFirebaseConfigured();
   const liveW = isLive && isGatewayOrSingle(device) ? (device as SingleDevice | GatewayDevice) : null;
+  const liveAny = isLive ? device : null;
+  const offlineQueueSize = liveAny?.offlineFirebaseQueueSize ?? live.status?.offline_firebase_queue_size ?? live.latest?.offline_firebase_queue_size;
+  const offlineQueueReady = liveAny?.offlineQueueReady ?? live.status?.offline_queue_ready ?? live.latest?.offline_queue_ready;
+  const bleProtocol = liveAny?.bleProtocol ?? live.status?.protocol ?? live.latest?.protocol ?? '-';
+  const firmwareVersion = live.status?.fw || live.latest?.fw || live.status?.fw_version || live.latest?.fw_version || live.status?.firmware_version || live.latest?.firmware_version || device.firmwareVersion || 'v3.2.17';
   const removeRoleWarning =
     device.role === 'gateway'
       ? 'Removing this gateway will disconnect child and relay nodes from the app until another gateway receives them.'
@@ -457,6 +474,41 @@ export default function DeviceDetailScreen() {
               </Text>
             </Card.Content>
           </Card>
+
+          <Card
+            style={{
+              marginTop: spacing.md,
+              borderRadius: radius.xl,
+              ...shadows.soft,
+              backgroundColor: colors.card,
+              borderWidth: 1,
+              borderColor: offlineQueueReady === false ? 'rgba(239,68,68,0.35)' : colors.border,
+            }}
+          >
+            <Card.Content style={{ gap: spacing.sm }}>
+              <Text style={{ fontWeight: '900', color: colors.navy, fontSize: 16 }}>Firmware / queues</Text>
+              <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>Firmware: {firmwareVersion}</Text>
+              <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>BLE protocol: {bleProtocol}</Text>
+              <Text style={{ color: offlineQueueReady === false ? colors.danger : colors.mutedStrong, fontWeight: '600' }}>
+                Offline Firebase queue: {offlineQueueSize ?? 0} pending batches
+              </Text>
+              <Text style={{ color: offlineQueueReady === false ? colors.danger : colors.mutedStrong, fontWeight: '600' }}>
+                Offline queue ready: {offlineQueueReady === undefined ? '-' : offlineQueueReady ? 'yes' : 'no'}
+              </Text>
+              <Text style={{ color: offlineQueueReady === false ? colors.danger : colors.mutedStrong, fontWeight: '700' }}>
+                {offlineQueueStatusText(offlineQueueSize, offlineQueueReady)}
+              </Text>
+              <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>
+                Gateway uplink queue: {liveAny?.gatewayUplinkQueueSize ?? live.status?.gateway_uplink_queue_size ?? live.status?.gateway_uplink_queue ?? live.latest?.gateway_uplink_queue_size ?? live.latest?.gateway_uplink_queue ?? 0}
+              </Text>
+              <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>
+                Pairing cloud queue: {liveAny?.pairingCloudQueueSize ?? live.status?.pairing_cloud_queue_size ?? live.status?.pairing_cloud_queue ?? live.latest?.pairing_cloud_queue_size ?? live.latest?.pairing_cloud_queue ?? 0}
+              </Text>
+              <Text style={{ color: colors.mutedStrong, fontWeight: '600' }}>
+                Forward queue: {liveAny?.forwardQueueSize ?? liveAny?.forwardQueue ?? live.status?.forward_queue_size ?? live.latest?.forward_queue_size ?? 0}
+              </Text>
+            </Card.Content>
+          </Card>
         </>
       ) : null}
 
@@ -606,6 +658,10 @@ export default function DeviceDetailScreen() {
         </Card>
       ) : null}
 
+      {isLive && firebaseReady ? (
+        <RemoteCommandControls deviceId={deviceId} networkId={remoteNetworkId} />
+      ) : null}
+
       {device.role === 'gateway' && !isLive ? (
         <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
           <SecondaryButton label="Run Diagnostics" onPress={() => router.push({ pathname: '/device/diagnostics', params: { deviceId: device.id } })} />
@@ -708,8 +764,10 @@ export default function DeviceDetailScreen() {
             <Text style={{ color: colors.mutedStrong, fontFamily: 'monospace', fontSize: 13, lineHeight: 20 }}>
               devices/{deviceId}/latest{'\n'}
               devices/{deviceId}/status{'\n'}
-              devices/{deviceId}/commands/reset_wifi{'\n'}
-              devices/{deviceId}/commands/reset_wifi_ack
+              devices/{deviceId}/commands/inbox/{'{commandId}'}{'\n'}
+              devices/{deviceId}/commands/acks/{'{commandId}'}{'\n'}
+              networks/{remoteNetworkId ?? '{networkId}'}/devices/{deviceId}/commands/inbox/{'{commandId}'}{'\n'}
+              networks/{remoteNetworkId ?? '{networkId}'}/devices/{deviceId}/commands/acks/{'{commandId}'}
             </Text>
           </Dialog.Content>
           <Dialog.Actions>

@@ -1,6 +1,8 @@
 # AquaNode
 
-AquaNode is a React Native / Expo app for an ESP32-S3 water quality monitoring system. The current firmware source of truth is WQM Unified Firmware v3.2.12 AsyncAck + Firebase Schema v4, which uses a custom BLE JSON service for pairing, Wi-Fi setup, and LoRa mesh configuration.
+AquaNode is a React Native / Expo app for an ESP32-S3 water quality monitoring system.
+
+Current firmware source of truth: WQM Unified Firmware v3.2.17 Reliable Queue + BLE v2 + Remote Commands.
 
 ## Firmware BLE Contract
 
@@ -12,24 +14,38 @@ Use a real Android development build. Expo Go does not include the native BLE mo
 - RX characteristic, app writes JSON: `8b6d0002-9d7a-4f5a-a909-5ccbd0e00100`
 - TX characteristic, firmware sends JSON notifications: `8b6d0003-9d7a-4f5a-a909-5ccbd0e00100`
 
-Commands:
-
-- `{"cmd":"info"}` -> `{"type":"info","ok":true,...}`
-- `{"cmd":"set_id","device_id":"M1","network_id":"POND_001"}` -> `{"type":"set_id","ok":true}`
-- `{"cmd":"scan_wifi"}` or `{"cmd":"wifi_scan"}` -> `{"type":"wifi_scan","items":[...]}`
-- `{"cmd":"set_wifi","ssid":"...","password":"...","pass":"...","gateway":true}` -> `wifi_result` notifications for `connecting`, then `connected` or `failed`
-- `{"cmd":"scan"}` -> `{"type":"parents","items":[...]}`
-- `{"cmd":"pair","parent_id":"M1","role":"CHILD","network_id":"POND_001"}` -> `pair_started`, `pair_result`, then `server_test`
-- `{"cmd":"reset_pair"}`
-- `{"cmd":"factory"}`
-
-Legacy BLE commands remain supported. Firmware v3.2.12 can also acknowledge optional v2 command envelopes such as:
+The app sends only BLE v2 command envelopes:
 
 ```json
-{"v":2,"cmd_id":"app_1760000000000_001","cmd":"pair","args":{"parent_id":"M1","role":"CHILD","network_id":"POND_001"}}
+{"v":2,"cmd_id":"app_...","cmd":"info","args":{}}
 ```
 
-The app accepts both legacy notifications and `cmd_ack` messages, including pairing lifecycle stages such as `PAIR_ACCEPTED_WAITING_ACK`, `PAIR_SAVED_WAITING_TEST`, and `ACTIVE`.
+Commands:
+
+- `{"v":2,"cmd_id":"app_...","cmd":"info","args":{}}` -> `{"v":2,"type":"info","protocol":"wqm_ble_v2","ok":true,...}`
+- `{"v":2,"cmd_id":"app_...","cmd":"set_id","args":{"device_id":"M1","network_id":"POND_001"}}` -> `{"type":"set_id","ok":true}`
+- `{"v":2,"cmd_id":"app_...","cmd":"scan_wifi","args":{"max_results":12}}` -> `{"type":"wifi_scan","items":[...]}`
+- `{"v":2,"cmd_id":"app_...","cmd":"wifi_status","args":{}}`
+- `{"v":2,"cmd_id":"app_...","cmd":"set_wifi","args":{"ssid":"...","password":"...","gateway":true}}` -> `wifi_result` notifications for `connecting`, then `connected` or `failed`
+- `{"v":2,"cmd_id":"app_...","cmd":"scan","args":{}}` -> `{"type":"parents","items":[...]}`
+- `{"v":2,"cmd_id":"app_...","cmd":"pair","args":{"parent_id":"M1","role":"CHILD","network_id":"POND_001"}}` -> `pair_started`, `pair_result`, then `server_test`
+- `{"v":2,"cmd_id":"app_...","cmd":"clear_wifi","args":{}}`
+- `{"v":2,"cmd_id":"app_...","cmd":"reset_pair","args":{}}`
+- `{"v":2,"cmd_id":"app_...","cmd":"factory","args":{}}`
+
+Expected `info` fields include:
+
+```json
+{
+  "v": 2,
+  "type": "info",
+  "protocol": "wqm_ble_v2",
+  "offline_firebase_queue_size": 0,
+  "offline_queue_ready": true
+}
+```
+
+The app accepts older notifications and v2 `cmd_ack` messages, including pairing lifecycle stages such as `PAIR_ACCEPTED_WAITING_ACK`, `PAIR_SAVED_WAITING_TEST`, and `ACTIVE`.
 
 The app subscribes to TX notifications before writing `info`, then waits briefly before sending the command.
 
@@ -45,6 +61,8 @@ networks/{networkId}/devices/{deviceId}/link
 networks/{networkId}/gateways/{gatewayId}/children/{childId}/latest
 networks/{networkId}/gateways/{gatewayId}/children/{childId}/status
 networks/{networkId}/topology/{deviceId}
+networks/{networkId}/devices/{deviceId}/commands/inbox/{commandId}
+networks/{networkId}/devices/{deviceId}/commands/acks/{commandId}
 ```
 
 Legacy compatibility paths still work:
@@ -55,7 +73,11 @@ devices/{deviceId}/status
 devices/{gatewayId}/children/{childId}/latest
 devices/{gatewayId}/children/{childId}/status
 devices/{gatewayId}/network/{childId}
+devices/{deviceId}/commands/inbox/{commandId}
+devices/{deviceId}/commands/acks/{commandId}
 ```
+
+Remote commands are written to both inbox paths when a network ID is known. Supported app controls are `sample_now`, `set_interval`, `restart`, `reset_wifi`, `reset_pair`, and `clear_offline_queue`.
 
 Child pairing lifecycle labels:
 
@@ -98,7 +120,7 @@ If using ADB manually:
 ## App Setup Flows
 
 - Add Single / Gateway Device: scan `WQMPAIR_`, read `info`, scan Wi-Fi, send `set_wifi`, and wait for Firebase confirmation.
-- Add Child / Extend Network: scan `WQMPAIR_` for the new device only, read `info`, scan LoRa parents with `{"cmd":"scan"}`, send `pair` with role `CHILD`, and accept `pair_result.ok === true` or `cmd_ack` stage `PAIR_SAVED_WAITING_TEST` as successful pairing. Parents may be `GATEWAY`, `RELAY`, or `RELAY_CANDIDATE`; relay promotion is automatic in firmware. Children remain visible while waiting for first telemetry.
+- Add Child / Extend Network: scan `WQMPAIR_` for the new device only, read `info`, scan LoRa parents with BLE v2 `scan`, send BLE v2 `pair` with role `CHILD`, and accept `pair_result.ok === true` or `cmd_ack` stage `PAIR_SAVED_WAITING_TEST` as successful pairing. Parents may be `GATEWAY`, `RELAY`, or `RELAY_CANDIDATE`; relay promotion is automatic in firmware. Children remain visible while waiting for first telemetry.
 - Configure Existing Device: scan `WQMPAIR_`, read info, and send `set_id`, `set_wifi`, `reset_pair`, or `factory`.
 
 ## Debug Logs

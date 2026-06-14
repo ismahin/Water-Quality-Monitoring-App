@@ -27,6 +27,12 @@ export interface LiveFirebaseDeviceFields {
   wifiConnected?: boolean;
   sensorMode?: string;
   commandStream?: string;
+  bleProtocol?: string;
+  offlineFirebaseQueueSize?: number;
+  offlineQueueReady?: boolean;
+  gatewayUplinkQueueSize?: number;
+  pairingCloudQueueSize?: number;
+  forwardQueueSize?: number;
   removeRequested?: boolean;
   reprovisionRequired?: boolean;
   firebaseMessage?: string;

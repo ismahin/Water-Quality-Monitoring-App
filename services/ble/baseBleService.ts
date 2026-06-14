@@ -344,10 +344,19 @@ export function monitorJson<T>(
     return { messages, rest: start >= 0 ? buffer.slice(start) : '' };
   };
   const looksLikeNewTopLevelMessage = (decoded: string): boolean =>
-    decoded.trim().startsWith('{"type":') || decoded.trim().startsWith('{"cmd":') || decoded.trim().startsWith('{"t":');
+    decoded.trim().startsWith('{"type":') ||
+    decoded.trim().startsWith('{"v":') ||
+    decoded.trim().startsWith('{"cmd":') ||
+    decoded.trim().startsWith('{"t":');
   const notificationTypeOf = (decoded: string): string | null => {
-    const match = decoded.trim().match(/^\{"(?:type|cmd|t)":"([^"]+)"/);
-    return match?.[1] ?? null;
+    try {
+      const value = JSON.parse(decoded.trim()) as { type?: unknown; cmd?: unknown; t?: unknown };
+      const marker = value.type ?? value.cmd ?? value.t;
+      return typeof marker === 'string' ? marker : null;
+    } catch {
+      const match = decoded.trim().match(/^\{"(?:type|cmd|t)":"([^"]+)"/);
+      return match?.[1] ?? null;
+    }
   };
 
   return device.monitorCharacteristicForService(serviceUuid, characteristicUuid, (error, characteristic) => {

@@ -1,5 +1,5 @@
 import type { Device, Subscription } from 'react-native-ble-plx';
-import type { BleDebugState, PairingBleDevice, PairingCommand, PairingCommandEnvelope, PairingNotification, PairingParent } from '../../types/pairing';
+import type { BleDebugState, PairingBleDevice, PairingCommand, PairingNotification, PairingParent } from '../../types/pairing';
 import type { BaseBleDebugPatch, BaseBleScanStats } from './baseBleService';
 import { connectToDevice, disconnectDevice, monitorJson, scanDevices, stopScan, writeJson } from './baseBleService';
 import { MOCK_BLE_CONFIG } from './bleConfigService';
@@ -15,9 +15,24 @@ const MOCK_PARENTS: PairingParent[] = [
   { id: 'C1', role: 'RELAY_CANDIDATE', network_id: 'POND_001', root_gateway_id: 'M1', parent_id: 'M1', depth: 1, child_count: 0, max_children: 5, rssi: -49, snr: 7.2, age_ms: 1000 },
 ];
 
+function makeBleCommand(cmd: string, args: Record<string, unknown> = {}): PairingCommand {
+  return {
+    v: 2,
+    cmd_id: `app_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+    cmd,
+    args,
+  };
+}
+
 function parseDeviceIdFromName(name: string): string {
   if (name.startsWith(WQM_PAIR_NAME_PREFIX)) return name.slice(WQM_PAIR_NAME_PREFIX.length);
   return name;
+}
+
+function isDisconnectedWriteError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const low = message.toLowerCase();
+  return low.includes('not connected') || low.includes('disconnected') || low.includes('device disconnected');
 }
 
 export class UnifiedDeviceBleService {
@@ -25,7 +40,6 @@ export class UnifiedDeviceBleService {
   private notificationSub: Subscription | null = null;
   private mockCallback: ((notification: PairingNotification) => void) | null = null;
   private debugCallback: ((patch: Partial<BleDebugState>) => void) | null = null;
-  private envelopeCounter = 0;
   private writeQueue: Promise<void> = Promise.resolve();
 
   setDebugListener(callback: ((patch: Partial<BleDebugState>) => void) | null): void {
@@ -80,6 +94,15 @@ export class UnifiedDeviceBleService {
     await disconnectDevice(device);
   }
 
+  private clearStaleConnection(error: unknown): void {
+    if (!isDisconnectedWriteError(error)) return;
+    this.notificationSub?.remove();
+    this.notificationSub = null;
+    this.currentDevice = null;
+    this.writeQueue = Promise.resolve();
+    this.emitDebug({ connectedDeviceId: undefined, connectedDeviceName: undefined, lastError: 'Bluetooth disconnected. Please reconnect the device.' });
+  }
+
   subscribeNotifications(callback: (notification: PairingNotification) => void, onError?: (message: string) => void): () => void {
     if (MOCK_BLE_CONFIG) {
       this.mockCallback = callback;
@@ -115,29 +138,17 @@ export class UnifiedDeviceBleService {
     const device = this.currentDevice;
     const writeTask = this.writeQueue.then(() => writeJson(device, UNIFIED_SERVICE_UUID, UNIFIED_RX_UUID, command, options));
     this.writeQueue = writeTask.catch(() => undefined);
-    await writeTask;
+    try {
+      await writeTask;
+    } catch (error) {
+      this.clearStaleConnection(error);
+      throw error;
+    }
   }
 
-  async writeCommandEnvelope(cmd: string, args?: Record<string, unknown>): Promise<string> {
-    this.envelopeCounter += 1;
-    const command: PairingCommandEnvelope = {
-      v: 2,
-      cmd_id: `app_${Date.now()}_${String(this.envelopeCounter).padStart(3, '0')}`,
-      cmd,
-      ...(args ? { args } : {}),
-    };
-    const commandJson = JSON.stringify(command);
-    this.emitDebug({ lastCommand: commandJson });
-    if (MOCK_BLE_CONFIG) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      this.mockCallback?.({ type: 'cmd_ack', cmd_id: command.cmd_id, ok: true, stage: cmd === 'pair' ? 'PAIR_SAVED_WAITING_TEST' : 'ACTIVE' });
-      return command.cmd_id;
-    }
-    if (!this.currentDevice) throw new Error('No WQMPAIR device is connected.');
-    const device = this.currentDevice;
-    const writeTask = this.writeQueue.then(() => writeJson(device, UNIFIED_SERVICE_UUID, UNIFIED_RX_UUID, command));
-    this.writeQueue = writeTask.catch(() => undefined);
-    await writeTask;
+  async writeCommandEnvelope(cmd: string, args: Record<string, unknown> = {}, options?: { repeatWithoutResponseAfterSuccess?: boolean; preferWithoutResponse?: boolean }): Promise<string> {
+    const command = makeBleCommand(cmd, args);
+    await this.writeCommand(command, options);
     return command.cmd_id;
   }
 
@@ -167,48 +178,57 @@ export class UnifiedDeviceBleService {
   }
 
   getInfo(): Promise<void> {
-    return this.writeCommand({ cmd: 'info' }, { repeatWithoutResponseAfterSuccess: true });
+    return this.writeCommandEnvelope('info', {}, { repeatWithoutResponseAfterSuccess: true }).then(() => undefined);
   }
 
   setId(deviceId: string, networkId: string): Promise<void> {
-    return this.writeCommand({ cmd: 'set_id', device_id: deviceId, network_id: networkId });
+    return this.writeCommandEnvelope('set_id', { device_id: deviceId, network_id: networkId }).then(() => undefined);
   }
 
   setWifi(ssid: string, password: string, gateway = true): Promise<void> {
-    return this.writeCommand({ cmd: 'set_wifi', ssid, password, pass: password, gateway });
+    return this.writeCommandEnvelope('set_wifi', { ssid, password, gateway }).then(() => undefined);
   }
 
-  scanWifi(useAlias = false, maxResults?: number): Promise<void> {
-    return this.writeCommand(
-      {
-        cmd: useAlias ? 'wifi_scan' : 'scan_wifi',
-        ...(typeof maxResults === 'number' ? { max_results: maxResults } : {}),
-      },
+  scanWifi(_useAlias = false, maxResults?: number): Promise<void> {
+    return this.writeCommandEnvelope(
+      'scan_wifi',
+      typeof maxResults === 'number' ? { max_results: maxResults } : {},
       { repeatWithoutResponseAfterSuccess: true },
-    );
+    ).then(() => undefined);
+  }
+
+  wifiStatus(): Promise<void> {
+    return this.writeCommandEnvelope('wifi_status').then(() => undefined);
   }
 
   scanParents(): Promise<void> {
-    return this.writeCommand({ cmd: 'scan' });
+    return this.writeCommandEnvelope('scan').then(() => undefined);
   }
 
   pairNode(parentId: string, role: 'CHILD' | 'RELAY', networkId: string): Promise<void> {
-    return this.writeCommand({ cmd: 'pair', parent_id: parentId, role, network_id: networkId }, { preferWithoutResponse: true });
+    return this.writeCommandEnvelope('pair', { parent_id: parentId, role, network_id: networkId }, { preferWithoutResponse: true }).then(() => undefined);
   }
 
   resetPair(): Promise<void> {
-    return this.writeCommand({ cmd: 'reset_pair' });
+    return this.writeCommandEnvelope('reset_pair').then(() => undefined);
   }
 
   factoryReset(): Promise<void> {
-    return this.writeCommand({ cmd: 'factory' });
+    return this.writeCommandEnvelope('factory').then(() => undefined);
+  }
+
+  clearWifi(): Promise<void> {
+    return this.writeCommandEnvelope('clear_wifi').then(() => undefined);
   }
 
   private emitMock(command: PairingCommand): void {
     if (!this.mockCallback) return;
+    const args = command.args ?? {};
     if (command.cmd === 'info') {
       this.mockCallback({
+        v: 2,
         type: 'info',
+        protocol: 'wqm_ble_v2',
         device_id: 'M1',
         network_id: 'POND_001',
         role: 'UNPAIRED',
@@ -218,10 +238,16 @@ export class UnifiedDeviceBleService {
         lora_ready: true,
         wifi_connected: false,
         paired: false,
+        fw: 'v3.2.17',
+        offline_firebase_queue_size: 0,
+        offline_queue_ready: true,
+        gateway_uplink_queue_size: 0,
+        pairing_cloud_queue_size: 0,
+        forward_queue_size: 0,
       });
     }
     if (command.cmd === 'set_id') this.mockCallback({ type: 'set_id', ok: true });
-    if (command.cmd === 'scan_wifi' || command.cmd === 'wifi_scan') {
+    if (command.cmd === 'scan_wifi') {
       this.mockCallback({
         type: 'wifi_scan',
         ok: true,
@@ -236,22 +262,26 @@ export class UnifiedDeviceBleService {
       this.mockCallback({ type: 'wifi_result', ok: true, stage: 'connecting' });
       setTimeout(() => this.mockCallback?.({ type: 'wifi_result', ok: true, stage: 'connected', ip: '192.168.0.100' }), 900);
     }
+    if (command.cmd === 'wifi_status') this.mockCallback({ type: 'wifi_status', ok: true, wifi_connected: true, ip: '192.168.0.100' });
     if (command.cmd === 'scan') this.mockCallback({ type: 'parents', items: MOCK_PARENTS });
     if (command.cmd === 'pair') {
-      this.mockCallback({ type: 'pair_started', ok: true, parent_id: command.parent_id, role: command.role });
-      const selectedParent = MOCK_PARENTS.find((parent) => parent.id === command.parent_id);
+      const parentId = typeof args.parent_id === 'string' ? args.parent_id : '';
+      const role = args.role === 'RELAY' ? 'RELAY' : 'CHILD';
+      this.mockCallback({ type: 'pair_started', ok: true, parent_id: parentId, role });
+      const selectedParent = MOCK_PARENTS.find((parent) => parent.id === parentId);
       setTimeout(() => this.mockCallback?.({
         type: 'pair_result',
         ok: true,
         stage: 'saved',
-        parent_id: command.parent_id,
-        root_gateway_id: selectedParent?.root_gateway_id ?? (command.parent_id.startsWith('M') ? command.parent_id : 'M1'),
+        parent_id: parentId,
+        root_gateway_id: selectedParent?.root_gateway_id ?? (parentId.startsWith('M') ? parentId : 'M1'),
         auto_promoted: selectedParent?.role === 'RELAY_CANDIDATE',
       }), 600);
-      setTimeout(() => this.mockCallback?.({ type: 'server_test', status: 'sent', test_id: `${command.role}_MOCK_${Date.now()}` }), 1100);
+      setTimeout(() => this.mockCallback?.({ type: 'server_test', status: 'sent', test_id: `${role}_MOCK_${Date.now()}` }), 1100);
     }
     if (command.cmd === 'reset_pair') this.mockCallback({ type: 'reset_pair', ok: true });
     if (command.cmd === 'factory') this.mockCallback({ type: 'factory', ok: true, message: 'Restarting' });
+    if (command.cmd === 'clear_wifi') this.mockCallback({ type: 'clear_wifi', ok: true, message: 'Wi-Fi credentials cleared' });
   }
 }
 

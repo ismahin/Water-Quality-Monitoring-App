@@ -9,6 +9,7 @@ import React, {
   useState,
 } from 'react';
 import type { AquaAlert } from '../types/alert';
+import type { CctvCamera } from '../types/cctv';
 import type { AquaDevice, ChildDevice, DeviceOnlineStatus, GatewayDevice, RelayDevice, SingleDevice } from '../types/device';
 import type { NetworkDevice, TopologyNode } from '../types/networkDevice';
 import type { Pond } from '../types/pond';
@@ -38,6 +39,7 @@ const KEYS = {
   onboarded: '@aquanode/hasCompletedOnboarding',
   session: '@aquanode/mockLoggedIn',
   registered: '@aquanode/registeredDevices',
+  cctvCameras: '@aquanode/cctvCameras',
 };
 
 export type TempUnit = 'C' | 'F';
@@ -69,6 +71,7 @@ interface MockAppState {
   mockLoggedIn: boolean;
   hydrated: boolean;
   registeredDevices: RegisteredDevice[];
+  cctvCameras: CctvCamera[];
   firebaseRtdbConnected: boolean;
 }
 
@@ -86,6 +89,9 @@ interface MockAppContextValue extends MockAppState {
   addRegisteredDevice: (deviceId: string, options?: AddRegisteredOptions) => Promise<void>;
   removeRegisteredDevice: (deviceId: string) => Promise<void>;
   updateRegisteredDeviceName: (deviceId: string, name: string) => Promise<void>;
+  addCctvCamera: (camera: Omit<CctvCamera, 'id' | 'createdAt'>) => Promise<void>;
+  updateCctvCamera: (cameraId: string, camera: Omit<CctvCamera, 'id' | 'createdAt'>) => Promise<void>;
+  removeCctvCamera: (cameraId: string) => Promise<void>;
   getLiveDevice: (deviceId: string) => AquaDevice | null;
   getLiveSnapshot: (deviceId: string) => FirebaseDeviceSnapshot | undefined;
   getGatewayChildren: (gatewayId: string) => AquaDevice[];
@@ -130,6 +136,27 @@ function normalizeRegistered(raw: unknown): RegisteredDevice[] {
       pondId: typeof o.pondId === 'string' ? o.pondId : 'pond-a',
       bleProvisionName: typeof o.bleProvisionName === 'string' ? o.bleProvisionName : undefined,
       bleConfigName: typeof o.bleConfigName === 'string' ? o.bleConfigName : undefined,
+    });
+  }
+  return out;
+}
+
+function normalizeCctvCameras(raw: unknown): CctvCamera[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CctvCamera[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const id = typeof o.id === 'string' && o.id.trim() ? o.id.trim() : `cctv_${Date.now()}_${out.length}`;
+    const name = typeof o.name === 'string' && o.name.trim() ? o.name.trim() : `Camera ${out.length + 1}`;
+    const streamUrl = typeof o.streamUrl === 'string' ? o.streamUrl.trim() : '';
+    if (!streamUrl) continue;
+    out.push({
+      id,
+      name,
+      streamUrl,
+      location: typeof o.location === 'string' && o.location.trim() ? o.location.trim() : undefined,
+      createdAt: typeof o.createdAt === 'string' ? o.createdAt : new Date().toISOString(),
     });
   }
   return out;
@@ -212,6 +239,14 @@ function dateFromMaybeMs(value?: number): string {
   return new Date(timestamp).toISOString();
 }
 
+function firstNumber(...values: Array<number | undefined>): number | undefined {
+  return values.find((value) => typeof value === 'number' && Number.isFinite(value));
+}
+
+function firstString(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
 function hasNetworkSensorTelemetry(device: NetworkDevice): boolean {
   const latest = device.latest;
   return !!latest && [latest.ph, latest.tds, latest.temperature, latest.turbidity].some((value) => typeof value === 'number' && Number.isFinite(value));
@@ -230,6 +265,8 @@ function mapNetworkDeviceToAppDevice(device: NetworkDevice, displayName?: string
   const parentId = status?.parent_id ?? latest?.parent_id ?? '';
   const rootGatewayId = status?.root_gateway_id ?? latest?.root_gateway_id ?? (role === 'gateway' ? device.id : undefined);
   const telemetryReceived = status?.telemetry_received ?? hasNetworkSensorTelemetry(device);
+  const firmwareVersion = firstString(status?.fw, latest?.fw, status?.fw_version, latest?.fw_version, status?.firmware_version, latest?.firmware_version) ?? 'unknown';
+  const networkId = status?.network_id ?? latest?.network_id;
   const lifecycleLabel = childLifecycleLabel({
     pairStage: status?.pair_stage,
     lifecycleState: status?.lifecycle_state,
@@ -264,13 +301,27 @@ function mapNetworkDeviceToAppDevice(device: NetworkDevice, displayName?: string
       turbidityNtu: latest?.turbidity ?? 0,
     },
     calibrationStatus: 'ok' as const,
-    firmwareVersion: '1.0.0',
+    firmwareVersion,
     universalRole: device.displayRole as UniversalRole,
     hardwareMode: role === 'single' ? 'SINGLE' : 'NETWORK',
-    networkId: latest?.network_id,
+    networkId,
     parentId,
     rootGatewayId,
     gatewayId: rootGatewayId,
+    route: status?.route ?? latest?.route,
+    commandStream: status?.command_stream,
+    wifiConnected: status?.wifi_connected ?? latest?.wifi_connected,
+    gatewayUplinkEnabled: status?.gateway_uplink_enabled,
+    relayEnabled: status?.relay_enabled,
+    loraReady: status?.lora_ready ?? latest?.lora_ready,
+    loraLastError: status?.lora_error ?? latest?.lora_error,
+    loraPacketCount: firstNumber(status?.lora_packet_count, latest?.lora_packet_count, status?.tx_packet_count, latest?.tx_packet_count),
+    forwardQueue: firstNumber(status?.forward_queue, status?.forward_queue_size, latest?.forward_queue_size),
+    forwardQueueSize: firstNumber(status?.forward_queue_size, status?.forward_queue, latest?.forward_queue_size),
+    gatewayUplinkQueueSize: firstNumber(status?.gateway_uplink_queue_size, status?.gateway_uplink_queue, latest?.gateway_uplink_queue_size, latest?.gateway_uplink_queue),
+    pairingCloudQueueSize: firstNumber(status?.pairing_cloud_queue_size, status?.pairing_cloud_queue, latest?.pairing_cloud_queue_size, latest?.pairing_cloud_queue),
+    offlineFirebaseQueueSize: status?.offline_firebase_queue_size ?? latest?.offline_firebase_queue_size,
+    offlineQueueReady: status?.offline_queue_ready ?? latest?.offline_queue_ready,
     pairStage: status?.pair_stage,
     pairConfirmed: status?.pair_confirmed,
     telemetryReceived,
@@ -287,11 +338,11 @@ function mapNetworkDeviceToAppDevice(device: NetworkDevice, displayName?: string
     return {
       ...common,
       role,
-      wifiSsid: '-',
-      wifiRssi: -100,
+      wifiSsid: status?.wifi_ssid ?? latest?.wifi_ssid ?? '-',
+      wifiRssi: status?.wifi_rssi ?? latest?.wifi_rssi ?? -100,
       cloudOnline: true,
-      loraGatewayEnabled: true,
-      gatewayUplinkEnabled: true,
+      loraGatewayEnabled: status?.lora_ready ?? latest?.lora_ready ?? true,
+      gatewayUplinkEnabled: status?.gateway_uplink_enabled ?? true,
       childDeviceIds: [],
     } satisfies GatewayDevice;
   }
@@ -302,8 +353,8 @@ function mapNetworkDeviceToAppDevice(device: NetworkDevice, displayName?: string
       role,
       parentId,
       relayEnabled: true,
-      loraRssi: status?.rssi ?? latest?.rssi ?? -120,
-      loraSnr: status?.snr ?? latest?.snr ?? 0,
+      loraRssi: firstNumber(status?.child_rssi, latest?.child_rssi, status?.gateway_rssi, latest?.gateway_rssi, status?.rssi, latest?.rssi) ?? -120,
+      loraSnr: firstNumber(status?.child_snr, latest?.child_snr, status?.gateway_snr, latest?.gateway_snr, status?.snr, latest?.snr) ?? 0,
       packetSuccessPercent: latest ? 100 : 0,
       childDeviceIds: [],
     } satisfies RelayDevice;
@@ -315,8 +366,8 @@ function mapNetworkDeviceToAppDevice(device: NetworkDevice, displayName?: string
       role,
       parentId,
       relayEnabled: false,
-      loraRssi: status?.rssi ?? latest?.rssi ?? -120,
-      loraSnr: status?.snr ?? latest?.snr ?? 0,
+      loraRssi: firstNumber(status?.child_rssi, latest?.child_rssi, status?.gateway_rssi, latest?.gateway_rssi, status?.rssi, latest?.rssi) ?? -120,
+      loraSnr: firstNumber(status?.child_snr, latest?.child_snr, status?.gateway_snr, latest?.gateway_snr, status?.snr, latest?.snr) ?? 0,
       packetSuccessPercent: latest ? 100 : 0,
     } satisfies ChildDevice;
   }
@@ -324,8 +375,8 @@ function mapNetworkDeviceToAppDevice(device: NetworkDevice, displayName?: string
   return {
     ...common,
     role,
-    wifiSsid: '-',
-    wifiRssi: -100,
+    wifiSsid: status?.wifi_ssid ?? latest?.wifi_ssid ?? '-',
+    wifiRssi: status?.wifi_rssi ?? latest?.wifi_rssi ?? -100,
     cloudOnline: true,
   } satisfies SingleDevice;
 }
@@ -477,6 +528,7 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
   const [mockLoggedIn, setMockLoggedInState] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [registeredDevices, setRegisteredDevices] = useState<RegisteredDevice[]>([]);
+  const [cctvCameras, setCctvCameras] = useState<CctvCamera[]>([]);
   const [hydratedRegistered, setHydratedRegistered] = useState(false);
   const [liveSnapshots, setLiveSnapshots] = useState<Record<string, FirebaseDeviceSnapshot>>({});
   const [mergedChildrenByGateway, setMergedChildrenByGateway] = useState<Record<string, AquaDevice[]>>({});
@@ -489,10 +541,11 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
-        const [o, s, regRaw] = await Promise.all([
+        const [o, s, regRaw, cctvRaw] = await Promise.all([
           AsyncStorage.getItem(KEYS.onboarded),
           AsyncStorage.getItem(KEYS.session),
           AsyncStorage.getItem(KEYS.registered),
+          AsyncStorage.getItem(KEYS.cctvCameras),
         ]);
         if (!cancelled) {
           setHasCompletedOnboardingState(o === '1');
@@ -502,6 +555,19 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
               setRegisteredDevices(normalizeRegistered(JSON.parse(regRaw)));
             } catch {
               setRegisteredDevices([]);
+            }
+          }
+          if (cctvRaw) {
+            try {
+              const normalized = normalizeCctvCameras(JSON.parse(cctvRaw));
+              console.log('[CCTV Context] hydrated cameras', {
+                count: normalized.length,
+                cameras: normalized.map((camera) => ({ id: camera.id, name: camera.name, url: camera.streamUrl })),
+              });
+              setCctvCameras(normalized);
+            } catch {
+              console.warn('[CCTV Context] failed to parse stored CCTV cameras');
+              setCctvCameras([]);
             }
           }
         }
@@ -521,6 +587,15 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
     if (!hydratedRegistered) return;
     void AsyncStorage.setItem(KEYS.registered, JSON.stringify(registeredDevices));
   }, [registeredDevices, hydratedRegistered]);
+
+  useEffect(() => {
+    if (!hydratedRegistered) return;
+    console.log('[CCTV Context] persist cameras', {
+      count: cctvCameras.length,
+      cameras: cctvCameras.map((camera) => ({ id: camera.id, name: camera.name, url: camera.streamUrl })),
+    });
+    void AsyncStorage.setItem(KEYS.cctvCameras, JSON.stringify(cctvCameras));
+  }, [cctvCameras, hydratedRegistered]);
 
   useEffect(() => {
     const db = getFirebaseDb();
@@ -547,7 +622,7 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
     const unsubs = registeredDevices.map((reg) =>
       subscribeToOwnDevice(reg.deviceId, (snap) => {
         setLiveSnapshots((prev) => ({ ...prev, [reg.deviceId]: snap }));
-      }),
+      }, reg.networkId || undefined),
     );
     return () => {
       unsubs.forEach((u) => u());
@@ -708,6 +783,51 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  const addCctvCamera = useCallback(async (camera: Omit<CctvCamera, 'id' | 'createdAt'>) => {
+    const streamUrl = camera.streamUrl.trim();
+    if (!streamUrl) return;
+    const entry: CctvCamera = {
+      id: `cctv_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+      name: camera.name.trim() || 'CCTV camera',
+      streamUrl,
+      location: camera.location?.trim() || undefined,
+      createdAt: new Date().toISOString(),
+    };
+    console.log('[CCTV Context] add camera', {
+      id: entry.id,
+      name: entry.name,
+      url: entry.streamUrl,
+    });
+    setCctvCameras((prev) => [entry, ...prev]);
+  }, []);
+
+  const updateCctvCamera = useCallback(async (cameraId: string, camera: Omit<CctvCamera, 'id' | 'createdAt'>) => {
+    const streamUrl = camera.streamUrl.trim();
+    if (!streamUrl) return;
+    console.log('[CCTV Context] update camera', {
+      cameraId,
+      name: camera.name,
+      url: streamUrl,
+    });
+    setCctvCameras((prev) =>
+      prev.map((item) =>
+        item.id === cameraId
+          ? {
+              ...item,
+              name: camera.name.trim() || item.name,
+              streamUrl,
+              location: camera.location?.trim() || undefined,
+            }
+          : item,
+      ),
+    );
+  }, []);
+
+  const removeCctvCamera = useCallback(async (cameraId: string) => {
+    console.log('[CCTV Context] remove camera', { cameraId });
+    setCctvCameras((prev) => prev.filter((camera) => camera.id !== cameraId));
+  }, []);
+
   const getLiveSnapshot = useCallback(
     (deviceId: string): FirebaseDeviceSnapshot | undefined => liveSnapshots[deviceId],
     [liveSnapshots],
@@ -784,6 +904,7 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
       mockLoggedIn,
       hydrated: fullyHydrated,
       registeredDevices,
+      cctvCameras,
       firebaseRtdbConnected,
       setHasCompletedOnboarding,
       setMockLoggedIn,
@@ -798,6 +919,9 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
       addRegisteredDevice,
       removeRegisteredDevice,
       updateRegisteredDeviceName,
+      addCctvCamera,
+      updateCctvCamera,
+      removeCctvCamera,
       getLiveDevice,
       getLiveSnapshot,
       getGatewayChildren,
@@ -818,6 +942,7 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
       mockLoggedIn,
       fullyHydrated,
       registeredDevices,
+      cctvCameras,
       firebaseRtdbConnected,
       setHasCompletedOnboarding,
       setMockLoggedIn,
@@ -828,6 +953,9 @@ export function MockAppProvider({ children }: { children: React.ReactNode }) {
       addRegisteredDevice,
       removeRegisteredDevice,
       updateRegisteredDeviceName,
+      addCctvCamera,
+      updateCctvCamera,
+      removeCctvCamera,
       getLiveDevice,
       getLiveSnapshot,
       getGatewayChildren,

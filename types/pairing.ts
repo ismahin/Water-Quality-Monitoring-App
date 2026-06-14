@@ -33,25 +33,18 @@ function normalizeSwitchMode(value: unknown): SwitchMode | string {
   return mode || 'PAIRING';
 }
 
-export type PairingCommand =
-  | { cmd: 'info' }
-  | { cmd: 'scan' }
-  | { cmd: 'scan_wifi'; max_results?: number }
-  | { cmd: 'wifi_scan'; max_results?: number }
-  | { cmd: 'set_id'; device_id: string; network_id: string }
-  | { cmd: 'set_wifi'; ssid: string; password: string; pass?: string; gateway: boolean }
-  | { cmd: 'pair'; parent_id: string; role: 'CHILD' | 'RELAY'; network_id: string }
-  | { cmd: 'reset_pair' }
-  | { cmd: 'factory' };
-
-export type PairingCommandEnvelope = {
+export type PairingCommand = {
   v: 2;
   cmd_id: string;
   cmd: string;
-  args?: Record<string, unknown>;
+  args: Record<string, unknown>;
 };
 
 export interface PairingDeviceInfo {
+  v?: number;
+  protocol?: 'wqm_ble_v2' | string;
+  cmd_id?: string;
+  cmd?: string;
   type?: 'info';
   ok?: boolean;
   deviceId: string;
@@ -75,9 +68,17 @@ export interface PairingDeviceInfo {
   autoRelayPromotion?: boolean;
   smartRouting?: boolean;
   forwardQueueSize?: number;
+  offlineFirebaseQueueSize?: number;
+  offlineQueueReady?: boolean;
+  gatewayUplinkQueueSize?: number;
+  pairingCloudQueueSize?: number;
 }
 
 export interface PairingBleInfo extends PairingDeviceInfo {
+  v?: number;
+  protocol?: 'wqm_ble_v2' | string;
+  cmd_id?: string;
+  cmd?: string;
   device_id: string;
   network_id: string;
   switch_mode: SwitchMode | string;
@@ -94,6 +95,10 @@ export interface PairingBleInfo extends PairingDeviceInfo {
   auto_relay_promotion?: boolean;
   smart_routing?: boolean;
   forward_queue_size?: number;
+  offline_firebase_queue_size?: number;
+  offline_queue_ready?: boolean;
+  gateway_uplink_queue_size?: number;
+  pairing_cloud_queue_size?: number;
 }
 
 export function normalizeDeviceInfo(rawValue: unknown, fallbackDeviceId = ''): PairingBleInfo | null {
@@ -115,10 +120,18 @@ export function normalizeDeviceInfo(rawValue: unknown, fallbackDeviceId = ''): P
   const autoRelayPromotion = toOptionalBool(raw.auto_relay_promotion ?? raw.autoRelayPromotion);
   const smartRouting = toOptionalBool(raw.smart_routing ?? raw.smartRouting);
   const forwardQueueSize = toNumberField(raw.forward_queue_size ?? raw.forwardQueueSize);
+  const offlineFirebaseQueueSize = toNumberField(raw.offline_firebase_queue_size ?? raw.offlineFirebaseQueueSize);
+  const offlineQueueReady = toOptionalBool(raw.offline_queue_ready ?? raw.offlineQueueReady);
+  const gatewayUplinkQueueSize = toNumberField(raw.gateway_uplink_queue_size ?? raw.gatewayUplinkQueueSize);
+  const pairingCloudQueueSize = toNumberField(raw.pairing_cloud_queue_size ?? raw.pairingCloudQueueSize);
   const loraReady = toBool(raw.lora_ready) || toBool(raw.loraReady);
   const paired = toBool(raw.paired);
 
   return {
+    v: toNumberField(raw.v),
+    protocol: toStringField(raw.protocol),
+    cmd_id: toStringField(raw.cmd_id),
+    cmd: toStringField(raw.cmd),
     type: 'info',
     ok: toOptionalBool(raw.ok),
     deviceId,
@@ -142,6 +155,10 @@ export function normalizeDeviceInfo(rawValue: unknown, fallbackDeviceId = ''): P
     autoRelayPromotion,
     smartRouting,
     forwardQueueSize,
+    offlineFirebaseQueueSize,
+    offlineQueueReady,
+    gatewayUplinkQueueSize,
+    pairingCloudQueueSize,
     device_id: deviceId,
     network_id: networkId,
     switch_mode: switchMode,
@@ -158,6 +175,10 @@ export function normalizeDeviceInfo(rawValue: unknown, fallbackDeviceId = ''): P
     auto_relay_promotion: autoRelayPromotion,
     smart_routing: smartRouting,
     forward_queue_size: forwardQueueSize,
+    offline_firebase_queue_size: offlineFirebaseQueueSize,
+    offline_queue_ready: offlineQueueReady,
+    gateway_uplink_queue_size: gatewayUplinkQueueSize,
+    pairing_cloud_queue_size: pairingCloudQueueSize,
   };
 }
 
@@ -234,16 +255,18 @@ export interface BleDebugState {
 
 export type PairingNotification =
   | ({ type: 'info' } & PairingBleInfo)
-  | { type: 'parents'; items: PairingParent[] }
-  | { type: 'wifi_scan'; ok?: boolean; device_id?: string; count?: number; total_found?: number; items?: WifiScanItem[]; message?: string }
-  | { type: 'set_id'; ok: boolean; message?: string }
+  | { v?: number; protocol?: string; cmd_id?: string; cmd?: string; type: 'parents'; items: PairingParent[] }
+  | { v?: number; protocol?: string; cmd_id?: string; cmd?: string; type: 'wifi_scan'; ok?: boolean; device_id?: string; count?: number; total_found?: number; items?: WifiScanItem[]; message?: string }
+  | { v?: number; protocol?: string; cmd_id?: string; cmd?: string; type: 'wifi_status'; ok?: boolean; wifi_connected?: boolean; ip?: string; message?: string; [key: string]: unknown }
+  | { v?: number; protocol?: string; cmd_id?: string; cmd?: string; type: 'set_id'; ok: boolean; message?: string }
   | ({ type: 'wifi_result' } & WifiSetupResult)
-  | { type: 'pair_started'; ok: boolean; parent_id?: string; role?: 'CHILD' | 'RELAY'; message?: string }
-  | { type: 'pair_result'; ok: boolean; stage?: string; parent_id?: string; root_gateway_id?: string; message?: string }
-  | { v?: 2; type: 'cmd_ack'; cmd_id?: string; ok: boolean; stage?: string; message?: string; [key: string]: unknown }
-  | { type: 'server_test'; ok?: boolean; status: 'sent' | string; test_id?: string; message?: string }
-  | { type: 'reset_pair'; ok: boolean; message?: string }
-  | { type: 'factory'; ok: boolean; message?: string }
+  | { v?: number; protocol?: string; cmd_id?: string; cmd?: string; type: 'pair_started'; ok: boolean; parent_id?: string; role?: 'CHILD' | 'RELAY'; message?: string }
+  | { v?: number; protocol?: string; cmd_id?: string; cmd?: string; type: 'pair_result'; ok: boolean; stage?: string; parent_id?: string; root_gateway_id?: string; message?: string }
+  | { v?: number; protocol?: string; type: 'cmd_ack'; cmd_id?: string; cmd?: string; ok: boolean; stage?: string; message?: string; [key: string]: unknown }
+  | { v?: number; protocol?: string; cmd_id?: string; cmd?: string; type: 'server_test'; ok?: boolean; status: 'sent' | string; test_id?: string; message?: string }
+  | { v?: number; protocol?: string; cmd_id?: string; cmd?: string; type: 'clear_wifi'; ok: boolean; message?: string }
+  | { v?: number; protocol?: string; cmd_id?: string; cmd?: string; type: 'reset_pair'; ok: boolean; message?: string }
+  | { v?: number; protocol?: string; cmd_id?: string; cmd?: string; type: 'factory'; ok: boolean; message?: string }
   | { type: string; ok?: boolean; message?: string; [key: string]: unknown };
 
 export type PairingWizardStep = 'instructions' | 'ble' | 'info' | 'role' | 'parent' | 'connect' | 'test' | 'done';

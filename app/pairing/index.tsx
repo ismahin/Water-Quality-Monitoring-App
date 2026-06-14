@@ -89,6 +89,19 @@ function roleBadgeColor(role: PairingDeviceRole): string {
   return colors.surfaceMuted;
 }
 
+function queueStatusText(size?: number, ready?: boolean): string {
+  if (ready === false) return 'Persistent queue not ready; check ESP32 partition/LittleFS.';
+  if (ready === true && (size ?? 0) === 0) return 'All cloud data synced.';
+  if (ready === true && (size ?? 0) > 0) return 'Stored locally, waiting for Wi-Fi/Firebase.';
+  return 'Queue status unknown.';
+}
+
+function isBleDisconnectedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const low = message.toLowerCase();
+  return low.includes('not connected') || low.includes('disconnected') || low.includes('device disconnected');
+}
+
 function DeviceRow({
   device,
   connecting,
@@ -363,10 +376,15 @@ export default function PairingWizardScreen() {
     setScanComplete(ble.parents.length > 0);
     setSelectedParent(null);
     setStep('parents');
-    console.log('[LORA UI] Sending LoRa parent scan command: {"cmd":"scan"}');
+    console.log('[LORA UI] Sending LoRa parent scan command: {"v":2,"cmd_id":"app_...","cmd":"scan","args":{}}');
     try {
       await ble.actions.scanParents();
     } catch (error) {
+      if (isBleDisconnectedError(error)) {
+        setScanError('Bluetooth disconnected from the new device. Reconnect it, then scan LoRa parents again.');
+        setScanComplete(true);
+        return;
+      }
       if (ble.parents.length === 0) {
         setScanError(error instanceof Error ? error.message : 'Could not send LoRa parent scan command.');
         setScanComplete(true);
@@ -392,7 +410,7 @@ export default function PairingWizardScreen() {
     setChildFirebaseSeen(false);
     setTestId(null);
     setServerTestTimedOut(false);
-    console.log('[LORA UI] Sending pair command:', JSON.stringify({ cmd: 'pair', parent_id: selectedParent.id, role: 'CHILD', network_id: selectedParent.network_id }));
+    console.log('[LORA UI] Sending pair command:', JSON.stringify({ v: 2, cmd_id: 'app_...', cmd: 'pair', args: { parent_id: selectedParent.id, role: 'CHILD', network_id: selectedParent.network_id } }));
     try {
       await ble.actions.startPairing(selectedParent.id, 'CHILD', selectedParent.network_id);
       setPairCommandSent(true);
@@ -512,6 +530,20 @@ export default function PairingWizardScreen() {
                 <Text style={{ color: colors.mutedStrong }}>Switch mode: {ble.info.switchMode}</Text>
                 <Text style={{ color: colors.mutedStrong }}>LoRa ready: {ble.info.loraReady ? 'Yes' : 'No'}</Text>
                 <Text style={{ color: colors.mutedStrong }}>Already paired: {ble.info.paired ? 'Yes' : 'No'}</Text>
+                <Text style={{ color: colors.mutedStrong }}>Firmware: {ble.info.fw ?? 'v3.2.17'}</Text>
+                <Text style={{ color: colors.mutedStrong }}>BLE protocol: {ble.info.protocol ?? '-'}</Text>
+                <Text style={{ color: ble.info.offlineQueueReady === false ? colors.danger : colors.mutedStrong }}>
+                  Offline Firebase queue: {ble.info.offlineFirebaseQueueSize ?? 0} pending batches
+                </Text>
+                <Text style={{ color: ble.info.offlineQueueReady === false ? colors.danger : colors.mutedStrong }}>
+                  Offline queue ready: {ble.info.offlineQueueReady === undefined ? '-' : ble.info.offlineQueueReady ? 'yes' : 'no'}
+                </Text>
+                <Text style={{ color: ble.info.offlineQueueReady === false ? colors.danger : colors.mutedStrong, fontWeight: '700' }}>
+                  {queueStatusText(ble.info.offlineFirebaseQueueSize, ble.info.offlineQueueReady)}
+                </Text>
+                <Text style={{ color: colors.mutedStrong }}>Gateway uplink queue: {ble.info.gatewayUplinkQueueSize ?? 0}</Text>
+                <Text style={{ color: colors.mutedStrong }}>Pairing cloud queue: {ble.info.pairingCloudQueueSize ?? 0}</Text>
+                <Text style={{ color: colors.mutedStrong }}>Forward queue: {ble.info.forwardQueueSize ?? 0}</Text>
               </>
             ) : null}
             {validationError ? (
@@ -550,7 +582,7 @@ export default function PairingWizardScreen() {
                 <SecondaryButton label="Rescan Parents" onPress={() => void scanParents()} />
               </View>
               <Text style={{ color: colors.mutedStrong }}>
-                Parent scan uses LoRa command {'{"cmd":"scan"}'} from the connected new device.
+                Parent scan uses LoRa command {'{"v":2,"cmd_id":"app_...","cmd":"scan","args":{}}'} from the connected new device.
               </Text>
               {scanComplete && sortedParents.length === 0 ? (
                 <Text style={{ color: colors.warning, fontWeight: '900' }}>

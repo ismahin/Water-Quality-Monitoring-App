@@ -31,6 +31,12 @@ function isParentsNotification(notification: PairingNotification): notification 
   return notification.type === 'parents' && Array.isArray(notification.items);
 }
 
+function isDisconnectedMessage(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const low = message.toLowerCase();
+  return low.includes('not connected') || low.includes('disconnected') || low.includes('device disconnected');
+}
+
 export function usePairingBle() {
   const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectedDeviceNameRef = useRef<string | undefined>(undefined);
@@ -38,6 +44,7 @@ export function usePairingBle() {
   const lastParentsKeyRef = useRef('');
   const lastDebugPatchRef = useRef('');
   const lastDebugPatchAtRef = useRef(0);
+  const commandTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const devicesRef = useRef<Map<string, PairingBleDevice>>(new Map());
   const devicesFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [devices, setDevices] = useState<PairingBleDevice[]>([]);
@@ -80,12 +87,17 @@ export function usePairingBle() {
       unifiedDeviceBleService.setDebugListener(null);
       if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
       if (devicesFlushTimerRef.current) clearTimeout(devicesFlushTimerRef.current);
+      if (commandTimeoutRef.current) clearTimeout(commandTimeoutRef.current);
       unifiedDeviceBleService.stopScan();
       void unifiedDeviceBleService.disconnect();
     };
   }, []);
 
   const handleNotification = useCallback((notification: PairingNotification) => {
+    if (commandTimeoutRef.current) {
+      clearTimeout(commandTimeoutRef.current);
+      commandTimeoutRef.current = null;
+    }
     const notificationKey = JSON.stringify(notification);
     if (notificationKey !== lastNotificationKeyRef.current) {
       lastNotificationKeyRef.current = notificationKey;
@@ -217,19 +229,44 @@ export function usePairingBle() {
     setParents([]);
   }, []);
 
+  const runCommandWithTimeout = useCallback(async (send: () => Promise<void>, timeoutMs = 10000) => {
+    if (commandTimeoutRef.current) clearTimeout(commandTimeoutRef.current);
+    setError(null);
+    commandTimeoutRef.current = setTimeout(() => {
+      commandTimeoutRef.current = null;
+      setError('BLE command timed out. The device did not send a response.');
+    }, timeoutMs);
+    try {
+      await send();
+    } catch (error) {
+      if (commandTimeoutRef.current) {
+        clearTimeout(commandTimeoutRef.current);
+        commandTimeoutRef.current = null;
+      }
+      if (isDisconnectedMessage(error)) {
+        connectedDeviceNameRef.current = undefined;
+        setConnectedDevice(null);
+        setError('Bluetooth disconnected. Please reconnect the device and try again.');
+      }
+      throw error;
+    }
+  }, []);
+
   const actions = useMemo(
     () => ({
-      getInfo: () => unifiedDeviceBleService.getInfo(),
-      setIdentity: (deviceId: string, networkId: string) => unifiedDeviceBleService.setId(deviceId, networkId),
-      setWifi: (ssid: string, password: string, gateway = true) => unifiedDeviceBleService.setWifi(ssid, password, gateway),
-      scanWifi: (useAlias = false, maxResults?: number) => unifiedDeviceBleService.scanWifi(useAlias, maxResults),
-      scanParents: () => unifiedDeviceBleService.scanParents(),
+      getInfo: () => runCommandWithTimeout(() => unifiedDeviceBleService.getInfo()),
+      setIdentity: (deviceId: string, networkId: string) => runCommandWithTimeout(() => unifiedDeviceBleService.setId(deviceId, networkId)),
+      setWifi: (ssid: string, password: string, gateway = true) => runCommandWithTimeout(() => unifiedDeviceBleService.setWifi(ssid, password, gateway), 15000),
+      scanWifi: (useAlias = false, maxResults?: number) => runCommandWithTimeout(() => unifiedDeviceBleService.scanWifi(useAlias, maxResults), 15000),
+      wifiStatus: () => runCommandWithTimeout(() => unifiedDeviceBleService.wifiStatus()),
+      scanParents: () => runCommandWithTimeout(() => unifiedDeviceBleService.scanParents(), 12000),
       startPairing: (parentId: string, role: 'CHILD' | 'RELAY', networkId: string) =>
-        unifiedDeviceBleService.pairNode(parentId, role, networkId),
-      resetPairing: () => unifiedDeviceBleService.resetPair(),
-      factoryReset: () => unifiedDeviceBleService.factoryReset(),
+        runCommandWithTimeout(() => unifiedDeviceBleService.pairNode(parentId, role, networkId), 15000),
+      resetPairing: () => runCommandWithTimeout(() => unifiedDeviceBleService.resetPair()),
+      factoryReset: () => runCommandWithTimeout(() => unifiedDeviceBleService.factoryReset()),
+      clearWifi: () => runCommandWithTimeout(() => unifiedDeviceBleService.clearWifi()),
     }),
-    [],
+    [runCommandWithTimeout],
   );
 
   const scanSummary = useMemo(() => {
